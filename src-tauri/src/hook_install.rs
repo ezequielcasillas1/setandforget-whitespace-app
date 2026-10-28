@@ -38,7 +38,7 @@ fn entry(tool: &str, ev: &str, exe: &Path) -> Value {
     let cmd = format!("\"{exe}\" {tool} {ev}");
     match tool {
         "claude" | "codex" => {
-            let mut g = json!({ "hooks": [{ "type": "command", "command": cmd }] });
+            let mut g = json!({ "hooks": [{ "type": "command", "command": cmd, "timeout": 5 }] });
             if ev == "Notification" { g["matcher"] = json!("permission_prompt|elicitation_dialog"); }
             g
         }
