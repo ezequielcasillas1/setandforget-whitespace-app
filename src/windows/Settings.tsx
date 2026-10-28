@@ -226,10 +226,12 @@ export default function SettingsWindow() {
       {msg && <p className="msg">{msg}</p>}
 
       <div className="actions">
+        {isTauri() && <button onClick={() => void invoke('quit_app').catch(() => setMsg("Couldn't quit. Right-click the tray icon and pick Quit."))}>Quit Whitespace</button>}
         <button className="primary" onClick={save}>Save</button>
         {isTauri() && <button onClick={() => void invoke('show_whiteout_test')}>Show whiteout now (test)</button>}
         {!isTauri() && <button onClick={() => { location.hash = 'whiteout-preview'; location.reload() }}>Preview whiteout</button>}
       </div>
+      {isTauri() && <p className="helper">Quit closes Whitespace completely. Unsaved changes aren't kept.</p>}
     </div>
   )
 }

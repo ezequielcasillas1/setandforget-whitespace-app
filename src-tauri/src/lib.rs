@@ -150,6 +150,10 @@ fn register_hotkey(app: &AppHandle, combo: &str) -> Result<(), String> {
     }).map_err(|e| e.to_string())
 }
 
+/// Card §19: same full exit as the tray's Quit.
+#[tauri::command]
+fn quit_app(app: AppHandle) { app.exit(0); }
+
 #[tauri::command]
 async fn get_settings(core: tauri::State<'_, Shared>) -> Result<Value, String> { Ok(core.lock().unwrap().settings.clone()) }
 
@@ -302,7 +306,7 @@ pub fn run() {
             slog(&logdir, "loop started");
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_settings, save_settings, request_clear, whiteout_faded, show_whiteout_test, verse_refs, verse_translations, verse_get, hook_status, install_hook, remove_hook, cursor_key_status, set_cursor_key, clear_cursor_key])
+        .invoke_handler(tauri::generate_handler![get_settings, save_settings, request_clear, whiteout_faded, show_whiteout_test, verse_refs, verse_translations, verse_get, hook_status, install_hook, remove_hook, cursor_key_status, set_cursor_key, clear_cursor_key, quit_app])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, ev| { if let tauri::RunEvent::ExitRequested { api, code, .. } = ev { if code.is_none() { api.prevent_exit(); } } });
