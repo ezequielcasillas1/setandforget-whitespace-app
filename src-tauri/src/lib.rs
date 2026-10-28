@@ -36,6 +36,31 @@ struct Core {
 }
 type Shared = Arc<Mutex<Core>>;
 
+/// Tray checkmarks for the display switches (card §17), kept in sync with Settings.
+struct DisplayItems { verses: CheckMenuItem<tauri::Wry>, breathing: CheckMenuItem<tauri::Wry> }
+
+fn sync_display_items(app: &AppHandle, settings: &Value) {
+    if let Some(d) = app.try_state::<DisplayItems>() {
+        let _ = d.verses.set_checked(settings["display"]["verses"] != json!(false));
+        let _ = d.breathing.set_checked(settings["display"]["breathing"] != json!(false));
+    }
+}
+
+/// Flip one display switch from the tray and save right away.
+fn toggle_display(app: &AppHandle, key: &str) {
+    let shared = app.state::<Shared>().inner().clone();
+    let (settings, err) = {
+        let mut c = shared.lock().unwrap();
+        let on = c.settings["display"][key] != json!(false);
+        c.settings["display"][key] = json!(!on);
+        let err = settings::save(&c.settings_path, &c.settings).err();
+        (c.settings.clone(), err)
+    };
+    if let Some(e) = err { eprintln!("saving display switch failed: {e}"); }
+    sync_display_items(app, &settings);
+    let _ = app.emit("settings:display", settings["display"].clone());
+}
+
 fn now_ms(c: &Core) -> u64 { c.origin.elapsed().as_millis() as u64 }
 
 fn whiteouts(app: &AppHandle) -> Vec<tauri::WebviewWindow> {
@@ -118,6 +143,7 @@ async fn save_settings(app: AppHandle, settings: Value) -> Result<Option<String>
         for a in c.adapters.iter_mut() { a.configure(&settings); }
         c.settings = settings;
     }
+    { let s = app.state::<Shared>().lock().unwrap().settings.clone(); sync_display_items(&app, &s); }
     Ok(register_hotkey(&app, &combo).err().map(|_| "This shortcut is in use by another app. The hotkey will still exit the whiteout.".into()))
 }
 
@@ -187,13 +213,18 @@ pub fn run() {
             let settings_i = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
             let pause_i = CheckMenuItem::with_id(app, "pause", "Pause adapters", true, false, None::<&str>)?;
             let test_i = MenuItem::with_id(app, "test", "Show whiteout now (test)", true, None::<&str>)?;
+            let verses_i = CheckMenuItem::with_id(app, "show-verses", "Show verses", true, settings["display"]["verses"] != json!(false), None::<&str>)?;
+            let breathing_i = CheckMenuItem::with_id(app, "show-breathing", "Show breathing", true, settings["display"]["breathing"] != json!(false), None::<&str>)?;
+            app.manage(DisplayItems { verses: verses_i.clone(), breathing: breathing_i.clone() });
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&settings_i, &pause_i, &test_i, &quit_i])?;
+            let menu = Menu::with_items(app, &[&settings_i, &pause_i, &test_i, &verses_i, &breathing_i, &quit_i])?;
             TrayIconBuilder::new().icon(app.default_window_icon().unwrap().clone()).tooltip("Whitespace").menu(&menu)
                 .on_menu_event(move |app, ev| match ev.id().as_ref() {
                     "settings" => open_settings(app),
                     "pause" => with_core(app, |c| { c.paused = !c.paused; (if c.paused { c.machine.disable() } else { Action::None }, ()) }),
                     "test" => show_whiteout_test(app.clone()),
+                    "show-verses" => toggle_display(app, "verses"),
+                    "show-breathing" => toggle_display(app, "breathing"),
                     "quit" => app.exit(0),
                     _ => {}
                 }).build(app)?;

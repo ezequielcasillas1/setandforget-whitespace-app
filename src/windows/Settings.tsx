@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { PATTERNS } from '../breathing/patterns'
 import { DEFAULT_SETTINGS, loadSettings, normalize, saveSettings, type Settings } from '../settings'
-import { invoke, isTauri } from '../tauri'
+import { invoke, isTauri, listen } from '../tauri'
 import { validateHotkey } from '../hotkey'
 import { DEFAULT_ADD_KIND, DEFAULT_WATCH, addEntry, sameAsDefaults, type WatchKind } from '../watch'
 
@@ -22,6 +22,14 @@ export default function SettingsWindow() {
   }
   const resetWatch = () => { set('watch', DEFAULT_WATCH.map((e) => ({ ...e }))); setConfirmReset(false) }
   useEffect(() => { void loadSettings().then((x) => { setS(x); setHotkeyDraft(x.panicHotkey) }) }, [])
+  // Tray checkmarks save straight away; keep this window in sync without touching unsaved edits.
+  useEffect(() => {
+    const sub = listen<Settings['display']>('settings:display', (d) => setS((p) => ({ ...p, display: d })))
+    return () => { void sub.then((u) => u()) }
+  }, [])
+  const setDisplay = (k: keyof Settings['display'], v: boolean) => set('display', { ...s.display, [k]: v })
+  const noBreathing = !s.display.breathing
+  const noVerses = !s.display.verses
   // Rejected combos keep the previous one (UX packet §4).
   const commitHotkey = () => {
     const r = validateHotkey(hotkeyDraft)
@@ -42,7 +50,7 @@ export default function SettingsWindow() {
 
       <h2>Exercise</h2>
       {PATTERNS.map((p) => (
-        <div key={p.id} className={`pattern-option${s.exercise === p.id ? ' active' : ''}`} onClick={() => set('exercise', p.id)}>
+        <div key={p.id} aria-disabled={noBreathing} className={`pattern-option${s.exercise === p.id ? ' active' : ''}${noBreathing ? ' disabled' : ''}`} onClick={() => { if (!noBreathing) set('exercise', p.id) }}>
           <span className="name">{p.name}</span>
           <span className="timing">{timingText(p)}</span>
           <span className="note">{p.note}</span>
@@ -53,8 +61,8 @@ export default function SettingsWindow() {
       <div className="row">First verse<span>As soon as breathing starts</span></div>
       <div className="row">New verse every (seconds, changes on an inhale)
         <span>
-          <input type="number" min={5} value={s.verseIntervalSec[0]} onChange={(e) => set('verseIntervalSec', [+e.target.value, s.verseIntervalSec[1]])} />{' – '}
-          <input type="number" min={5} value={s.verseIntervalSec[1]} onChange={(e) => set('verseIntervalSec', [s.verseIntervalSec[0], +e.target.value])} />
+          <input type="number" min={5} disabled={noVerses} value={s.verseIntervalSec[0]} onChange={(e) => set('verseIntervalSec', [+e.target.value, s.verseIntervalSec[1]])} />{' – '}
+          <input type="number" min={5} disabled={noVerses} value={s.verseIntervalSec[1]} onChange={(e) => set('verseIntervalSec', [s.verseIntervalSec[0], +e.target.value])} />
         </span>
       </div>
 
@@ -93,7 +101,11 @@ export default function SettingsWindow() {
       <label className="row">Accessibility fallback (opt-in)<input type="checkbox" checked={s.fallbackAccessibility} onChange={(e) => set('fallbackAccessibility', e.target.checked)} /></label>
 
       <h2>Look</h2>
-      <label className="row">Dust theme<input type="checkbox" checked={s.dustTheme} onChange={(e) => set('dustTheme', e.target.checked)} /></label>
+      <h3>Show on the whiteout</h3>
+      <label className="row">Show verses<input type="checkbox" checked={s.display.verses} onChange={(e) => setDisplay('verses', e.target.checked)} /></label>
+      <label className="row">Show breathing<input type="checkbox" checked={s.display.breathing} onChange={(e) => setDisplay('breathing', e.target.checked)} /></label>
+      {noVerses && noBreathing && <p className="hint">The whiteout will be a plain white screen.</p>}
+      <label className="row">Dust theme<input type="checkbox" disabled={noBreathing} checked={s.dustTheme} onChange={(e) => set('dustTheme', e.target.checked)} /></label>
       <label className="row">Reduced motion
         <select value={s.reducedMotion} onChange={(e) => set('reducedMotion', e.target.value as Settings['reducedMotion'])}>
           <option value="system">System</option><option value="on">On</option><option value="off">Off</option>

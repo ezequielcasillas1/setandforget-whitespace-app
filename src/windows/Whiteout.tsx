@@ -51,8 +51,10 @@ export default function Whiteout() {
   useEffect(() => {
     if (!visible || startedFor.current === seed) return
     startedFor.current = seed
-    start()
-    void startVerses()
+    const d = settingsRef.current.display
+    // The engine also paces verse changes (on an inhale), so it runs unseen when only verses are on.
+    if (d.breathing || d.verses) start()
+    if (d.verses) void startVerses() // verses off: no scheduler, no verse API calls
   }, [visible, seed, start, startVerses])
 
   const [instant, setInstant] = useState(false)
@@ -109,26 +111,29 @@ export default function Whiteout() {
   const diameter = Math.round(size * 0.36)
   const phase = pattern.phases[state.phaseIndex]
   const v = verses.verse
+  const showBreathing = settings.display.breathing
+  const showVerses = settings.display.verses
 
   return (
     <div className={`whiteout${visible ? ' visible' : ''}${instant && !visible ? ' instant' : ''}`}>
-      {settings.dustTheme && visible && <DustField breathRef={breathRef} reduced={reduced} />}
+      {showBreathing && settings.dustTheme && visible && <DustField breathRef={breathRef} reduced={reduced} />}
       <div className="stage">
-        <div className="circle-wrap" style={{ width: diameter, height: diameter }}>
-          <div ref={circleRef} className="circle" style={{ width: diameter, height: diameter }} />
+        {/* A part that's off isn't shown; the other keeps its position (UX slice 04). */}
+        <div className="circle-wrap" style={{ width: diameter, height: diameter, visibility: showBreathing ? 'visible' : 'hidden' }}>
+          {showBreathing && <div ref={circleRef} className="circle" style={{ width: diameter, height: diameter }} />}
         </div>
-        <div className="phase-label">{state.started ? phase.label : '\u00a0'}</div>
-        <div className="verse" style={{ opacity: v ? 1 : 0 }}>
-          {v?.text}
-          {v && <span className="verse-ref">{v.display}</span>}
+        <div className="phase-label">{showBreathing && state.started ? phase.label : '\u00a0'}</div>
+        <div className="verse" style={{ opacity: showVerses && v ? 1 : 0 }}>
+          {showVerses && v?.text}
+          {showVerses && v && <span className="verse-ref">{v.display}</span>}
         </div>
-        <div className="version">{v ? versionLabel(v) : '\u00a0'}</div>
+        <div className="version">{showVerses && v ? versionLabel(v) : '\u00a0'}</div>
       </div>
       <div className="exit">
         <button type="button" onClick={exit}>Exit</button>
         <span className="hint">{settings.panicHotkey} to exit</span>
       </div>
-      <div className="credits">{v?.source ?? FALLBACK_VERSE.source}</div>
+      {showVerses && <div className="credits">{v?.source ?? FALLBACK_VERSE.source}</div>}
     </div>
   )
 }

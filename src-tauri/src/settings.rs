@@ -6,7 +6,8 @@ pub fn defaults() -> Value {
     json!({ "exercise": "coherence", "verseIntervalSec": [45, 60], "verseFirstAtStart": true,
       "adapters": { "cursor": true, "build": true }, "watch": crate::adapters::build::default_watch(), "fallbackAccessibility": false, "dustTheme": false,
       "reducedMotion": "system", "monitors": "all", "panicHotkey": "Ctrl+Alt+Shift+Esc",
-      "adapterQuietSec": 90, "chime": { "muted": false, "volume": 0.25 } })
+      "adapterQuietSec": 90, "chime": { "muted": false, "volume": 0.25 },
+      "display": { "verses": true, "breathing": true } })
 }
 
 pub fn load(path: &PathBuf) -> Value {
@@ -18,6 +19,11 @@ pub fn load(path: &PathBuf) -> Value {
     }
     // Missing adapter keys default on (Terminal builds is on by default, card §15.3).
     if let Some(a) = base["adapters"].as_object_mut() { a.entry("build").or_insert(json!(true)); }
+    // Display switches (card §17): anything missing or not false counts as on.
+    base["display"] = json!({
+        "verses": base["display"]["verses"] != json!(false),
+        "breathing": base["display"]["breathing"] != json!(false),
+    });
     // Silently dedupe / drop blocked entries from a loaded settings.json (UX S2.2).
     base["watch"] = json!(crate::adapters::build::watch_from_settings(&base));
     base
@@ -48,6 +54,13 @@ mod tests {
         assert_eq!(v["watch"], json!([{ "match": "make", "kind": "command" }]));
         assert_eq!(defaults()["watch"].as_array().unwrap().len(), 10);
     }
+    #[test] fn load_keeps_display_off_and_fills_missing() {
+        let p = std::env::temp_dir().join(format!("ws-display-{}.json", std::process::id()));
+        std::fs::write(&p, r#"{"display":{"verses":false}}"#).unwrap();
+        let v = load(&p);
+        let _ = std::fs::remove_file(&p);
+        assert_eq!(v["display"], json!({ "verses": false, "breathing": true }));
+    }
     #[test] fn shortcut_mapping() { assert_eq!(to_shortcut("Ctrl+Alt+Shift+Esc"), "Control+Alt+Shift+Escape"); }
     #[test] fn load_merges_defaults() {
         let p = std::env::temp_dir().join(format!("aio-{}.json", std::process::id()));
@@ -55,6 +68,7 @@ mod tests {
         let v = load(&p);
         assert_eq!(v["dustTheme"], true);
         assert_eq!(v["panicHotkey"], "Ctrl+Alt+Shift+Esc");
+        assert_eq!(v["display"], json!({ "verses": true, "breathing": true }));
         let _ = std::fs::remove_file(p);
     }
 }
