@@ -7,7 +7,7 @@ pub fn defaults() -> Value {
       "adapters": { "build": true, "cursor": true, "claude": true, "codex": true, "copilot": true, "windsurf": true, "grokbot": false, "cursorCloud": false }, "watch": crate::adapters::build::default_watch(), "fallbackAccessibility": false, "dustTheme": false,
       "reducedMotion": "system", "monitors": "all", "panicHotkey": "Ctrl+Alt+Shift+Esc",
       "adapterQuietSec": 90, "chime": { "muted": false, "volume": 0.25 },
-      "display": { "verses": true, "breathing": true } })
+      "display": { "verses": true, "breathing": true, "screenMode": "full" } })
 }
 
 pub fn load(path: &PathBuf) -> Value {
@@ -23,6 +23,7 @@ pub fn load(path: &PathBuf) -> Value {
     base["display"] = json!({
         "verses": base["display"]["verses"] != json!(false),
         "breathing": base["display"]["breathing"] != json!(false),
+        "screenMode": if base["display"]["screenMode"] == json!("fit") { "fit" } else { "full" },
     });
     // Silently dedupe / drop blocked entries from a loaded settings.json (UX S2.2).
     base["watch"] = json!(crate::adapters::build::watch_from_settings(&base));
@@ -61,7 +62,7 @@ mod tests {
         std::fs::write(&p, r#"{"display":{"verses":false}}"#).unwrap();
         let v = load(&p);
         let _ = std::fs::remove_file(&p);
-        assert_eq!(v["display"], json!({ "verses": false, "breathing": true }));
+        assert_eq!(v["display"], json!({ "verses": false, "breathing": true, "screenMode": "full" }));
     }
     #[test] fn shortcut_mapping() { assert_eq!(to_shortcut("Ctrl+Alt+Shift+Esc"), "Control+Alt+Shift+Escape"); }
     #[test] fn load_merges_defaults() {
@@ -70,7 +71,7 @@ mod tests {
         let v = load(&p);
         assert_eq!(v["dustTheme"], true);
         assert_eq!(v["panicHotkey"], "Ctrl+Alt+Shift+Esc");
-        assert_eq!(v["display"], json!({ "verses": true, "breathing": true }));
+        assert_eq!(v["display"], json!({ "verses": true, "breathing": true, "screenMode": "full" }));
         let _ = std::fs::remove_file(p);
     }
 }

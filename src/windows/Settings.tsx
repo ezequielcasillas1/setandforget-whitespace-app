@@ -99,7 +99,7 @@ export default function SettingsWindow() {
     const sub = listen<Settings['display']>('settings:display', (d) => setS((p) => ({ ...p, display: d })))
     return () => { void sub.then((u) => u()) }
   }, [])
-  const setDisplay = (k: keyof Settings['display'], v: boolean) => set('display', { ...s.display, [k]: v })
+  const setDisplay = <K extends keyof Settings['display']>(k: K, v: Settings['display'][K]) => set('display', { ...s.display, [k]: v })
   const noBreathing = !s.display.breathing
   const noVerses = !s.display.verses
   // Rejected combos keep the previous one (UX packet §4).
@@ -201,6 +201,11 @@ export default function SettingsWindow() {
       <label className="row">Show verses<input type="checkbox" checked={s.display.verses} onChange={(e) => setDisplay('verses', e.target.checked)} /></label>
       <label className="row">Show breathing<input type="checkbox" checked={s.display.breathing} onChange={(e) => setDisplay('breathing', e.target.checked)} /></label>
       {noVerses && noBreathing && <p className="hint">The whiteout will be a plain white screen.</p>}
+      <h3>Screen mode</h3>
+      {([['full', 'Full screen'], ['fit', 'Fit to screen (keep taskbar visible)']] as const).map(([id, label]) => (
+        <div key={id} role="radio" aria-checked={s.display.screenMode === id} className={`pattern-option${s.display.screenMode === id ? ' active' : ''}`} onClick={() => setDisplay('screenMode', id)}>{label}</div>
+      ))}
+      <p className="hint">Takes effect the next time the whiteout appears.</p>
       <label className="row">Dust theme<input type="checkbox" disabled={noBreathing} checked={s.dustTheme} onChange={(e) => set('dustTheme', e.target.checked)} /></label>
       <label className="row">Reduced motion
         <select value={s.reducedMotion} onChange={(e) => set('reducedMotion', e.target.value as Settings['reducedMotion'])}>

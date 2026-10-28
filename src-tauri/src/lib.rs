@@ -11,7 +11,7 @@ use state::{Action, Aggregator, Machine};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
@@ -83,12 +83,31 @@ fn create_whiteouts(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Card §18: the whole monitor for "full", the monitor minus the taskbar for "fit".
+pub(crate) fn whiteout_rect(mode: &str, full: ((i32, i32), (u32, u32)), work: ((i32, i32), (u32, u32))) -> ((i32, i32), (u32, u32)) {
+    if mode == "fit" && work.1 .0 > 0 && work.1 .1 > 0 { work } else { full }
+}
+
+/// Re-size every whiteout to its monitor right before showing, so a mode change needs no restart.
+fn fit_whiteouts(app: &AppHandle, mode: &str) {
+    for w in whiteouts(app) {
+        let Some(m) = w.current_monitor().ok().flatten() else { continue };
+        let wa = m.work_area();
+        let ((x, y), (wd, ht)) = whiteout_rect(mode, ((m.position().x, m.position().y), (m.size().width, m.size().height)),
+            ((wa.position.x, wa.position.y), (wa.size.width, wa.size.height)));
+        let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
+        let _ = w.set_size(tauri::PhysicalSize::new(wd, ht));
+    }
+}
+
 /// Window work only. Never call while holding the Core lock: window calls on
 /// Windows wait for the main thread, which may itself be waiting on the lock.
 fn apply(app: &AppHandle, only_active: bool, action: Action) {
     match action {
         Action::None => {}
         Action::Show => {
+            let mode = app.state::<Shared>().lock().map(|c| c.settings["display"]["screenMode"].as_str().unwrap_or("full").to_string()).unwrap_or_else(|_| "full".into());
+            fit_whiteouts(app, &mode);
             let seed: u32 = rand::random();
             let active = app.cursor_position().ok().and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten());
             for w in whiteouts(app) {
@@ -242,6 +261,10 @@ pub fn run() {
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&settings_i, &pause_i, &test_i, &verses_i, &breathing_i, &quit_i])?;
             TrayIconBuilder::new().icon(app.default_window_icon().unwrap().clone()).tooltip("Whitespace").menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_tray_icon_event(|tray, ev| {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = ev { open_settings(tray.app_handle()); }
+                })
                 .on_menu_event(move |app, ev| match ev.id().as_ref() {
                     "settings" => open_settings(app),
                     "pause" => with_core(app, |c| { c.paused = !c.paused; (if c.paused { c.machine.disable() } else { Action::None }, ()) }),
@@ -283,4 +306,17 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, ev| { if let tauri::RunEvent::ExitRequested { api, code, .. } = ev { if code.is_none() { api.prevent_exit(); } } });
+}
+
+#[cfg(test)]
+mod screen_mode_tests {
+    use super::whiteout_rect;
+    const FULL: ((i32, i32), (u32, u32)) = ((0, 0), (1920, 1080));
+    const WORK: ((i32, i32), (u32, u32)) = ((0, 0), (1920, 1040));
+    #[test] fn full_covers_monitor() { assert_eq!(whiteout_rect("full", FULL, WORK), FULL); }
+    #[test] fn fit_uses_work_area() { assert_eq!(whiteout_rect("fit", FULL, WORK), WORK); }
+    #[test] fn unknown_or_empty_work_area_falls_back_to_full() {
+        assert_eq!(whiteout_rect("weird", FULL, WORK), FULL);
+        assert_eq!(whiteout_rect("fit", FULL, ((0, 0), (0, 0))), FULL);
+    }
 }

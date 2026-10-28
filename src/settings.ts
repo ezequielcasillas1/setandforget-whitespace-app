@@ -20,7 +20,7 @@ export type Settings = {
   adapterQuietSec: 90
   chime: { muted: boolean; volume: number }
   /** What the whiteout shows (card §17). Both off = plain white. */
-  display: { verses: boolean; breathing: boolean }
+  display: { verses: boolean; breathing: boolean; screenMode: 'full' | 'fit' }
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -36,7 +36,7 @@ export const DEFAULT_SETTINGS: Settings = {
   panicHotkey: DEFAULT_HOTKEY,
   adapterQuietSec: 90,
   chime: { muted: false, volume: 0.25 },
-  display: { verses: true, breathing: true },
+  display: { verses: true, breathing: true, screenMode: 'full' },
 }
 
 export function normalize(raw: Partial<Settings> | null | undefined): Settings {
@@ -50,7 +50,7 @@ export function normalize(raw: Partial<Settings> | null | undefined): Settings {
   s.panicHotkey = hk.ok ? hk.value : DEFAULT_HOTKEY
   s.adapters = { ...DEFAULT_SETTINGS.adapters, ...(s.adapters && typeof s.adapters === 'object' ? s.adapters : {}) }
   const d = (s.display && typeof s.display === 'object' ? s.display : {}) as Partial<Settings['display']>
-  s.display = { verses: d.verses !== false, breathing: d.breathing !== false }
+  s.display = { verses: d.verses !== false, breathing: d.breathing !== false, screenMode: d.screenMode === 'fit' ? 'fit' : 'full' }
   s.watch = normalizeWatch(raw?.watch)
   s.verseFirstAtStart = true
   s.adapterQuietSec = 90
