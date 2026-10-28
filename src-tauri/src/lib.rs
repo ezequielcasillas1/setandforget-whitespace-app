@@ -157,6 +157,8 @@ fn open_settings(app: &AppHandle) {
 
 pub fn run() {
     tauri::Builder::default()
+        // Must be first: a second launch hands off to the running app and exits.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| open_settings(app)))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             let handle = app.handle().clone();

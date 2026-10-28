@@ -262,3 +262,12 @@ Spec: `docs/specs/02-dev-tool-detection.md`. Source as Remy relayed it from Dex:
 
 ### 15.6 Off-limits
 Don't read terminal output or scrollback, don't inject into shells, and don't use admin rights or a driver. Reading process name, command line and exit code only.
+
+## 16. Single instance (rev 4, Oct 28, 2026)
+- Requested by Cheke on Oct 28, 2026, and added to Remy's spec as a must-ship.
+- Add `tauri-plugin-single-instance` (Tauri 2) and register it first in `run()` in `src-tauri/src/lib.rs`, before the other plugins.
+- What a second launch does: no new process starts. The plugin callback runs `open_settings(app)` on the copy that's already running.
+- Files touched: `src-tauri/Cargo.toml` and `src-tauri/src/lib.rs`. Nothing else changes.
+- Built on top of `31d0d04`, so the lock fix ships in the same installer.
+- Done when: double-clicking the shortcut several times leaves exactly one tray icon and one process, and Settings opens.
+- Off-limits: the first-run tray notice (Eden's proposal) is a separate later item and waits for Cheke's OK.
