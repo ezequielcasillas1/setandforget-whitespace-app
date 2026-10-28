@@ -23,6 +23,16 @@ export function hookStatusText(name: string, h: HookStatus | undefined, failed: 
   return h.id === 'codex' && h.trustPending ? 'Hook installed, waiting for trust in Codex' : 'Hook installed'
 }
 
+// Slice 03c status wording (UX packet, proposed).
+export const CLOUD_STATUS: Record<string, string> = {
+  'no-key': 'No key yet',
+  watching: 'Watching your cloud agents',
+  working: 'A cloud agent is working',
+  rejected: 'Key rejected. Check it in your Cursor Dashboard.',
+  unreachable: "Can't reach Cursor. Trying again.",
+}
+type CloudStatus = { present: boolean; status: string }
+
 const timingText = (p: (typeof PATTERNS)[number]) => p.phases.map((x) => x.duration).join('-')
 
 export default function SettingsWindow() {
@@ -38,6 +48,42 @@ export default function SettingsWindow() {
   const [hookFailed, setHookFailed] = useState<string | null>(null)
   useEffect(() => { if (isTauri()) void invoke<HookStatus[]>('hook_status').then(setHooks).catch(() => {}) }, [])
   // Acts right away, no Save step (UX B1). A failure leaves the button as it was (B2).
+  const [cloud, setCloud] = useState<CloudStatus>({ present: false, status: 'no-key' })
+  const [keyDraft, setKeyDraft] = useState('')
+  const [keyErr, setKeyErr] = useState<string | null>(null)
+  const cloudOn = s.adapters.cursorCloud === true
+  useEffect(() => {
+    if (!isTauri() || !cloudOn) return
+    const get = () => void invoke<CloudStatus>('cursor_key_status').then(setCloud).catch(() => {})
+    get(); const t = setInterval(get, 3000)
+    return () => clearInterval(t)
+  }, [cloudOn])
+  const saveKey = async () => {
+    try { setCloud(await invoke<CloudStatus>('set_cursor_key', { key: keyDraft })); setKeyErr(null) }
+    catch (e) { setKeyErr(String(e)) }
+    finally { setKeyDraft('') }
+  }
+  const removeKey = async () => {
+    try { setCloud(await invoke<CloudStatus>('clear_cursor_key')); setKeyErr(null) } catch (e) { setKeyErr(String(e)) }
+  }
+  const cloudRow = (
+      <div className="ai-tool">
+        <div className="row">
+          <label className="ai-name"><input type="checkbox" checked={cloudOn} onChange={(e) => set('adapters', { ...s.adapters, cursorCloud: e.target.checked })} /> Cursor cloud agents</label>
+        </div>
+        {cloudOn && (cloud.present ? (
+          <div className="row"><span>Key saved</span><button onClick={() => void removeKey()}>Remove key</button></div>
+        ) : (
+          <div className="row">
+            <input type="password" autoComplete="off" spellCheck={false} aria-label="Cursor API key" value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} />
+            <button disabled={!keyDraft.trim()} onClick={() => void saveKey()}>Save key</button>
+          </div>
+        ))}
+        {cloudOn && !cloud.present && <p className="helper">Create a key in your Cursor Dashboard. It stays on this PC.</p>}
+        {cloudOn && <p className={keyErr || ['rejected', 'unreachable'].includes(cloud.status) ? 'msg' : 'helper'}>{keyErr ?? CLOUD_STATUS[cloud.status] ?? ''}</p>}
+        {cloudOn && <p className="helper">Click Save at the bottom to turn checking on or off.</p>}
+      </div>
+  )
   const toggleHook = async (id: string, installed: boolean) => {
     try { setHooks(await invoke<HookStatus[]>(installed ? 'remove_hook' : 'install_hook', { id })); setHookFailed(null) }
     catch { setHookFailed(id) }
@@ -138,6 +184,7 @@ export default function SettingsWindow() {
             {t.note && <p className="helper">{t.note}</p>}
             <p className={failed ? 'msg' : 'helper'}>{hookStatusText(t.name, h, failed)}</p>
             {t.id === 'codex' && h?.installed && h.trustPending && <p className="helper">One more step: in Codex, open /hooks and trust Whitespace's hook.</p>}
+            {t.id === 'cursor' && cloudRow}
           </div>
         )
       })}

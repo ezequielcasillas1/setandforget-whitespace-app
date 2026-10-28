@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 pub fn defaults() -> Value {
     json!({ "exercise": "coherence", "verseIntervalSec": [45, 60], "verseFirstAtStart": true,
-      "adapters": { "build": true, "cursor": true, "claude": true, "codex": true, "copilot": true, "windsurf": true, "grokbot": false }, "watch": crate::adapters::build::default_watch(), "fallbackAccessibility": false, "dustTheme": false,
+      "adapters": { "build": true, "cursor": true, "claude": true, "codex": true, "copilot": true, "windsurf": true, "grokbot": false, "cursorCloud": false }, "watch": crate::adapters::build::default_watch(), "fallbackAccessibility": false, "dustTheme": false,
       "reducedMotion": "system", "monitors": "all", "panicHotkey": "Ctrl+Alt+Shift+Esc",
       "adapterQuietSec": 90, "chime": { "muted": false, "volume": 0.25 },
       "display": { "verses": true, "breathing": true } })
@@ -18,7 +18,7 @@ pub fn load(path: &PathBuf) -> Value {
         }
     }
     // Missing adapter keys default on (Terminal builds is on by default, card §15.3).
-    if let Some(a) = base["adapters"].as_object_mut() { for (k, d) in [("build", true), ("cursor", true), ("claude", true), ("codex", true), ("copilot", true), ("windsurf", true), ("grokbot", false)] { a.entry(k).or_insert(json!(d)); } }
+    if let Some(a) = base["adapters"].as_object_mut() { for (k, d) in [("build", true), ("cursor", true), ("claude", true), ("codex", true), ("copilot", true), ("windsurf", true), ("grokbot", false), ("cursorCloud", false)] { a.entry(k).or_insert(json!(d)); } }
     // Display switches (card §17): anything missing or not false counts as on.
     base["display"] = json!({
         "verses": base["display"]["verses"] != json!(false),

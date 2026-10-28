@@ -5,7 +5,7 @@ pub mod settings;
 pub mod state;
 pub mod verses;
 
-use adapters::{build::BuildAdapter, hooks::HookAdapter, Adapter};
+use adapters::{build::BuildAdapter, cursor_cloud, hooks::HookAdapter, Adapter};
 use serde_json::{json, Value};
 use state::{Action, Aggregator, Machine};
 use std::sync::{Arc, Mutex};
@@ -167,6 +167,13 @@ async fn install_hook(id: String) -> Result<Vec<Value>, String> { hook_install::
 #[tauri::command]
 async fn remove_hook(id: String) -> Result<Vec<Value>, String> { hook_install::remove(&id)?; Ok(hook_install::status_all()) }
 
+#[tauri::command]
+async fn cursor_key_status(h: tauri::State<'_, cursor_cloud::Handle>) -> Result<Value, String> { Ok(cursor_cloud::status(&h)) }
+#[tauri::command]
+async fn set_cursor_key(h: tauri::State<'_, cursor_cloud::Handle>, key: String) -> Result<Value, String> { cursor_cloud::set_key(&h, &key)?; Ok(cursor_cloud::status(&h)) }
+#[tauri::command]
+async fn clear_cursor_key(h: tauri::State<'_, cursor_cloud::Handle>) -> Result<Value, String> { cursor_cloud::clear_key(&h)?; Ok(cursor_cloud::status(&h)) }
+
 fn client(core: &tauri::State<Shared>) -> Result<verses::client::Client, String> {
     let c = core.lock().unwrap();
     match &c.verses { Some(_) => verses::client::Client::from_env(), None => Err("verse API not configured".into()) }
@@ -203,6 +210,8 @@ pub fn run() {
               std::panic::set_hook(Box::new(move |i| { slog(&ld, &format!("panic: {i}")); prev(i); })); }
             let settings_path = app.path().app_config_dir()?.join("settings.json");
             let settings = settings::load(&settings_path);
+            let (cloud, cloud_h) = cursor_cloud::CursorCloudAdapter::start(cursor_cloud::API.to_string());
+            app.manage(cloud_h);
             let shared: Shared = Arc::new(Mutex::new(Core {
                 machine: Machine::default(), agg: Aggregator::default(), origin: Instant::now(), paused: false, settings: settings.clone(), settings_path,
                 adapters: {
@@ -210,7 +219,7 @@ pub fn run() {
                         Box::new(BuildAdapter::new()),
                         Box::new(HookAdapter::real("claude", "Claude Code")), Box::new(HookAdapter::real("codex", "OpenAI Codex")),
                         Box::new(HookAdapter::real("copilot", "GitHub Copilot")), Box::new(HookAdapter::real("cursor", "Cursor")),
-                        Box::new(HookAdapter::real("windsurf", "Windsurf")),
+                        Box::new(HookAdapter::real("windsurf", "Windsurf")), Box::new(cloud),
                     ];
                     for a in v.iter_mut() { a.configure(&settings); }
                     v
@@ -270,7 +279,7 @@ pub fn run() {
             slog(&logdir, "loop started");
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_settings, save_settings, request_clear, whiteout_faded, show_whiteout_test, verse_refs, verse_translations, verse_get, hook_status, install_hook, remove_hook])
+        .invoke_handler(tauri::generate_handler![get_settings, save_settings, request_clear, whiteout_faded, show_whiteout_test, verse_refs, verse_translations, verse_get, hook_status, install_hook, remove_hook, cursor_key_status, set_cursor_key, clear_cursor_key])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, ev| { if let tauri::RunEvent::ExitRequested { api, code, .. } = ev { if code.is_none() { api.prevent_exit(); } } });
