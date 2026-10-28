@@ -3,6 +3,7 @@ import { PATTERNS } from '../breathing/patterns'
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, type Settings } from '../settings'
 import { invoke, isTauri } from '../tauri'
 import { validateHotkey } from '../hotkey'
+import { DEFAULT_ADD_KIND, DEFAULT_WATCH, addEntry, sameAsDefaults, type WatchKind } from '../watch'
 
 const timingText = (p: (typeof PATTERNS)[number]) => p.phases.map((x) => x.duration).join('-')
 
@@ -11,6 +12,15 @@ export default function SettingsWindow() {
   const [msg, setMsg] = useState<string | null>(null)
   const [hotkeyDraft, setHotkeyDraft] = useState(DEFAULT_SETTINGS.panicHotkey)
   const [hotkeyMsg, setHotkeyMsg] = useState<string | null>(null)
+  const [watchDraft, setWatchDraft] = useState('')
+  const [watchKind, setWatchKind] = useState<WatchKind>(DEFAULT_ADD_KIND)
+  const [watchMsg, setWatchMsg] = useState<string | null>(null)
+  const [confirmReset, setConfirmReset] = useState(false)
+  const addWatch = () => {
+    const r = addEntry(s.watch, watchDraft, watchKind)
+    if (r.ok) { set('watch', r.list); setWatchDraft(''); setWatchMsg(null) } else setWatchMsg(r.message)
+  }
+  const resetWatch = () => { set('watch', DEFAULT_WATCH.map((e) => ({ ...e }))); setConfirmReset(false) }
   useEffect(() => { void loadSettings().then((x) => { setS(x); setHotkeyDraft(x.panicHotkey) }) }, [])
   // Rejected combos keep the previous one (UX packet §4).
   const commitHotkey = () => {
@@ -47,6 +57,36 @@ export default function SettingsWindow() {
 
       <h2>Apps</h2>
       <label className="row">Cursor<input type="checkbox" checked={s.adapters.cursor ?? true} onChange={(e) => set('adapters', { ...s.adapters, cursor: e.target.checked })} /></label>
+      <label className="row">Terminal builds<input type="checkbox" checked={s.adapters.build ?? true} onChange={(e) => set('adapters', { ...s.adapters, build: e.target.checked })} /></label>
+      <p className="helper">Whiteout comes on while a watched build or command is running.</p>
+      <fieldset className="watch-list" disabled={s.adapters.build === false}>
+        {s.watch.length === 0 && <p className="helper">No builds watched. Terminal builds won't trigger the whiteout.</p>}
+        {s.watch.map((w, i) => (
+          <div key={`${w.kind}:${w.match}`} className="row">
+            <span><span className="watch-entry">{w.match}</span> <span className="watch-kind">{w.kind}</span></span>
+            <button className="text-button" onClick={() => set('watch', s.watch.filter((_, j) => j !== i))}>Remove</button>
+          </div>
+        ))}
+        <div className="row">
+          <input type="text" aria-label="Process name or command" value={watchDraft}
+            onChange={(e) => { setWatchDraft(e.target.value); setWatchMsg(null) }}
+            onKeyDown={(e) => { if (e.key === 'Enter') addWatch() }} />
+          <span>
+            <select aria-label="Kind" value={watchKind} onChange={(e) => { setWatchKind(e.target.value as WatchKind); setWatchMsg(null) }}>
+              <option value="process">Process</option><option value="command">Command</option>
+            </select>{' '}
+            <button onClick={addWatch}>Add</button>
+          </span>
+        </div>
+        {watchMsg && <p className="msg">{watchMsg}</p>}
+        {confirmReset ? (
+          <div className="row">Replace your watch list with the defaults? Your changes will be lost.
+            <span><button onClick={resetWatch}>Reset</button>{' '}<button onClick={() => setConfirmReset(false)}>Cancel</button></span>
+          </div>
+        ) : (
+          <button onClick={() => { if (sameAsDefaults(s.watch)) resetWatch(); else setConfirmReset(true) }}>Reset to defaults</button>
+        )}
+      </fieldset>
       <label className="row">Accessibility fallback (opt-in)<input type="checkbox" checked={s.fallbackAccessibility} onChange={(e) => set('fallbackAccessibility', e.target.checked)} /></label>
 
       <h2>Look</h2>

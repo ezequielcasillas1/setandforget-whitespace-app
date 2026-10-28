@@ -3,9 +3,9 @@ pub mod settings;
 pub mod state;
 pub mod verses;
 
-use adapters::{cursor::CursorAdapter, Adapter};
+use adapters::{build::BuildAdapter, cursor::CursorAdapter, Adapter};
 use serde_json::{json, Value};
-use state::{Action, Machine};
+use state::{Action, Aggregator, Machine};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
@@ -15,6 +15,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 struct Core {
     machine: Machine,
+    agg: Aggregator,
     origin: Instant,
     paused: bool,
     settings: Value,
@@ -64,7 +65,7 @@ fn apply(app: &AppHandle, core: &Core, action: Action) {
             }
         }
         Action::Clear(r) => {
-            let _ = app.emit("whiteout:clear", json!({ "reason": r.as_str(), "chime": r.chime() }));
+            let _ = app.emit("whiteout:clear", json!({ "reason": r.as_str(), "chime": r.chime(), "instant": r.instant() }));
             // Safety net: hide even if a webview never answers whiteout_faded.
             let app2 = app.clone();
             std::thread::spawn(move || { std::thread::sleep(Duration::from_millis(2500)); for w in whiteouts(&app2) { let _ = w.hide(); } });
@@ -99,6 +100,7 @@ fn save_settings(app: AppHandle, settings: Value) -> Result<Option<String>, Stri
         let shared = app.state::<Shared>().inner().clone();
         let mut c = shared.lock().unwrap();
         settings::save(&c.settings_path, &settings)?;
+        for a in c.adapters.iter_mut() { a.configure(&settings); }
         c.settings = settings;
     }
     Ok(register_hotkey(&app, &combo).err().map(|_| "This shortcut is in use by another app. The hotkey will still exit the whiteout.".into()))
@@ -146,8 +148,12 @@ pub fn run() {
             let settings_path = app.path().app_config_dir()?.join("settings.json");
             let settings = settings::load(&settings_path);
             let shared: Shared = Arc::new(Mutex::new(Core {
-                machine: Machine::default(), origin: Instant::now(), paused: false, settings: settings.clone(), settings_path,
-                adapters: vec![Box::new(CursorAdapter::new())], verses: verses::client::Client::from_env().ok(),
+                machine: Machine::default(), agg: Aggregator::default(), origin: Instant::now(), paused: false, settings: settings.clone(), settings_path,
+                adapters: {
+                    let mut v: Vec<Box<dyn Adapter>> = vec![Box::new(CursorAdapter::new()), Box::new(BuildAdapter::new())];
+                    for a in v.iter_mut() { a.configure(&settings); }
+                    v
+                }, verses: verses::client::Client::from_env().ok(),
             }));
             app.manage(shared.clone());
             create_whiteouts(&handle)?;
@@ -179,10 +185,13 @@ pub fn run() {
                     let enabled = c.settings["adapters"].clone();
                     let mut reports = vec![];
                     for a in c.adapters.iter_mut() {
-                        if enabled[a.id()].as_bool() == Some(false) { continue; }
-                        if let Some(s) = a.poll() { reports.push(s); }
+                        if enabled[a.id()].as_bool() == Some(false) { reports.push((a.id(), None)); continue; }
+                        if let Some(s) = a.poll() { reports.push((a.id(), Some(s))); }
                     }
-                    for s in reports { actions.push(c.machine.on_tool(s, now)); }
+                    let Core { machine, agg, .. } = &mut *c;
+                    for (id, s) in reports {
+                        actions.push(match s { Some(s) => agg.report(machine, id, s, now), None => agg.forget(machine, id, now) });
+                    }
                 }
                 actions.push(c.machine.tick(now));
                 for a in actions { apply(&handle, &c, a); }

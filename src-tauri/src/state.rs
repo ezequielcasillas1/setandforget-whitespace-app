@@ -13,6 +13,8 @@ pub enum ClearReason { NeedsYou, Done, Panic, ExitButton, Cap, AdapterQuiet, Dis
 impl ClearReason {
     /// The soft chime plays when the tool needs you or is done (spec).
     pub fn chime(self) -> bool { matches!(self, ClearReason::NeedsYou | ClearReason::Done) }
+    /// Needs-you (failed build, Cursor accept prompt) clears with no fade (UX S2.3).
+    pub fn instant(self) -> bool { matches!(self, ClearReason::NeedsYou) }
     pub fn as_str(self) -> &'static str {
         match self {
             ClearReason::NeedsYou => "needs-you", ClearReason::Done => "done", ClearReason::Panic => "panic",
@@ -84,6 +86,41 @@ impl Machine {
     pub fn is_shown(&self) -> bool { matches!(self.phase, Phase::Shown { .. }) }
 }
 
+
+/// Several tools → one overlay (card §15.2). Working if any enabled adapter is working; the single arm
+/// timer lives in `Machine` and isn't reset by a second tool. Clears when all are idle/done. A NeedsYou
+/// from any adapter clears right away and doesn't re-arm until a new Working edge.
+#[derive(Debug, Default, Clone)]
+pub struct Aggregator {
+    last: std::collections::HashMap<&'static str, ToolState>,
+    latched: bool,
+}
+
+impl Aggregator {
+    /// One adapter's report for this poll.
+    pub fn report(&mut self, m: &mut Machine, id: &'static str, s: ToolState, now: u64) -> Action {
+        let prev = self.last.insert(id, s);
+        match s {
+            ToolState::Working => {
+                let edge = prev != Some(ToolState::Working);
+                if self.latched && !edge { m.on_signal(now); return Action::None; }
+                self.latched = false;
+                m.on_tool(ToolState::Working, now)
+            }
+            ToolState::NeedsYou => { self.latched = true; m.on_tool(ToolState::NeedsYou, now) }
+            ToolState::Done | ToolState::Idle => {
+                if self.any_working() { m.on_signal(now); Action::None } else { m.on_tool(s, now) }
+            }
+        }
+    }
+    /// Adapter disabled or not reporting: forget it so it can't hold the overlay up.
+    pub fn forget(&mut self, m: &mut Machine, id: &'static str, now: u64) -> Action {
+        if self.last.remove(id) == Some(ToolState::Working) && !self.any_working() && !self.latched { return m.on_tool(ToolState::Done, now); }
+        Action::None
+    }
+    pub fn any_working(&self) -> bool { self.last.values().any(|s| *s == ToolState::Working) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,5 +182,44 @@ mod tests {
         assert_eq!(m.show_now(0), Action::Show);
         assert_eq!(m.show_now(5), Action::None);
         assert_eq!(m.tick(QUIET_MS), Action::Clear(ClearReason::AdapterQuiet));
+    }
+
+    #[test] fn two_tools_one_arm_timer() {
+        let (mut m, mut g) = (Machine::default(), Aggregator::default());
+        g.report(&mut m, "cursor", Working, 0);
+        g.report(&mut m, "build", Working, 2_000);
+        assert_eq!(m.tick(3_000), Action::Show);
+    }
+    #[test] fn clears_only_when_all_idle_or_done() {
+        let (mut m, mut g) = (Machine::default(), Aggregator::default());
+        g.report(&mut m, "cursor", Working, 0); g.report(&mut m, "build", Working, 0);
+        m.tick(3_000);
+        assert_eq!(g.report(&mut m, "cursor", Done, 4_000), Action::None);
+        assert!(m.is_shown());
+        assert_eq!(g.report(&mut m, "build", Done, 5_000), Action::Clear(ClearReason::Done));
+    }
+    #[test] fn needs_you_wins_instantly_and_latches_until_new_edge() {
+        let (mut m, mut g) = (Machine::default(), Aggregator::default());
+        g.report(&mut m, "cursor", Working, 0); g.report(&mut m, "build", Working, 0);
+        m.tick(3_000);
+        assert_eq!(g.report(&mut m, "build", NeedsYou, 4_000), Action::Clear(ClearReason::NeedsYou));
+        assert!(ClearReason::NeedsYou.instant() && !ClearReason::Done.instant());
+        // cursor keeps reporting Working: no re-arm
+        for t in [4_500, 8_000, 20_000] { assert_eq!(g.report(&mut m, "cursor", Working, t), Action::None); assert_eq!(m.tick(t), Action::None); }
+        assert_eq!(m.phase, Phase::Idle);
+        // a new Working edge re-arms
+        g.report(&mut m, "build", Working, 21_000);
+        assert_eq!(m.tick(24_000), Action::Show);
+    }
+    #[test] fn ongoing_build_keeps_quiet_timer_fed() {
+        let (mut m, mut g) = (Machine::default(), Aggregator::default());
+        let mut t = 0;
+        while t < 200_000 { g.report(&mut m, "build", Working, t); if t == 3_000 { assert_eq!(m.tick(t), Action::Show); } else { assert_eq!(m.tick(t), Action::None); } t += 500; }
+        assert!(m.is_shown());
+    }
+    #[test] fn forgetting_a_disabled_working_tool_clears() {
+        let (mut m, mut g) = (Machine::default(), Aggregator::default());
+        g.report(&mut m, "build", Working, 0); m.tick(3_000);
+        assert_eq!(g.forget(&mut m, "build", 4_000), Action::Clear(ClearReason::Done));
     }
 }

@@ -19,6 +19,7 @@ body { background: transparent; }
 
 .whiteout { position: fixed; inset: 0; background: #fff; opacity: 0; transition: opacity 400ms ease; cursor: default; user-select: none; overflow: hidden; }
 .whiteout.visible { opacity: 1; }
+.whiteout.instant { transition: none; }
 .whiteout canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .stage { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .circle-wrap { display: grid; place-items: center; }
@@ -48,3 +49,11 @@ body { background: transparent; }
 .actions { display: flex; gap: 10px; margin-top: 24px; }
 .actions button { min-height: 40px; padding: 0 16px; border-radius: 20px; border: 1px solid #ccc; background: #fff; cursor: pointer; font: 500 14px 'Manrope', sans-serif; }
 .actions button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+/* Slice 02 watch list (UX S2.1) */
+.helper { font-size: 13px; color: var(--muted); margin: 0 0 4px; }
+.watch-list { border: 0; padding: 0; margin: 0; }
+.watch-list:disabled { opacity: 0.5; }
+.watch-entry, .watch-kind { font-family: 'IBM Plex Mono', monospace; }
+.watch-kind { font-size: 11px; color: var(--muted); }
+.watch-list button { min-height: 44px; min-width: 44px; }
+.text-button { background: none; border: 0; cursor: pointer; font: 500 14px 'Manrope', sans-serif; text-decoration: underline; }

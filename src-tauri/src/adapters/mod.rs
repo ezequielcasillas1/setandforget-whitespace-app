@@ -1,4 +1,5 @@
 //! Adapter interface (card §4). Per-app on/off maps to `id()`.
+pub mod build;
 pub mod cursor;
 
 use std::time::Instant;
@@ -13,4 +14,6 @@ pub trait Adapter: Send {
     fn is_target_running(&self) -> bool;
     fn poll(&mut self) -> Option<ToolState>;
     fn last_signal_at(&self) -> Instant;
+    /// Apply settings (e.g. the build adapter's watch list). Default: nothing.
+    fn configure(&mut self, _settings: &serde_json::Value) {}
 }

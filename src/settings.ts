@@ -2,12 +2,15 @@
 // localStorage when running in a plain browser with `npm run dev`).
 import { isTauri, invoke } from './tauri'
 import { DEFAULT_HOTKEY, validateHotkey } from './hotkey'
+import { DEFAULT_WATCH, normalizeWatch, type WatchEntry } from './watch'
 
 export type Settings = {
   exercise: string
   verseIntervalSec: [number, number]
   verseFirstAtStart: true
   adapters: Record<string, boolean>
+  /** Terminal builds watch list (card §15.3). `adapters.build` is its on/off. */
+  watch: WatchEntry[]
   fallbackAccessibility: boolean
   dustTheme: boolean
   reducedMotion: 'system' | 'on' | 'off'
@@ -22,7 +25,8 @@ export const DEFAULT_SETTINGS: Settings = {
   exercise: 'coherence',
   verseIntervalSec: [45, 60],
   verseFirstAtStart: true,
-  adapters: { cursor: true },
+  adapters: { cursor: true, build: true },
+  watch: DEFAULT_WATCH,
   fallbackAccessibility: false,
   dustTheme: false,
   reducedMotion: 'system',
@@ -41,6 +45,8 @@ export function normalize(raw: Partial<Settings> | null | undefined): Settings {
   s.chime = { muted: !!c.muted, volume: Math.min(1, Math.max(0, Number(c.volume ?? 0.25))) }
   const hk = validateHotkey(String(s.panicHotkey ?? ''))
   s.panicHotkey = hk.ok ? hk.value : DEFAULT_HOTKEY
+  s.adapters = { ...DEFAULT_SETTINGS.adapters, ...(s.adapters && typeof s.adapters === 'object' ? s.adapters : {}) }
+  s.watch = normalizeWatch(raw?.watch)
   s.verseFirstAtStart = true
   s.adapterQuietSec = 90
   return s

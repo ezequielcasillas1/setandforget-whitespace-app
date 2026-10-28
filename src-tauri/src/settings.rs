@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 pub fn defaults() -> Value {
     json!({ "exercise": "coherence", "verseIntervalSec": [45, 60], "verseFirstAtStart": true,
-      "adapters": { "cursor": true }, "fallbackAccessibility": false, "dustTheme": false,
+      "adapters": { "cursor": true, "build": true }, "watch": crate::adapters::build::default_watch(), "fallbackAccessibility": false, "dustTheme": false,
       "reducedMotion": "system", "monitors": "all", "panicHotkey": "Ctrl+Alt+Shift+Esc",
       "adapterQuietSec": 90, "chime": { "muted": false, "volume": 0.25 } })
 }
@@ -16,6 +16,10 @@ pub fn load(path: &PathBuf) -> Value {
             for (k, v) in saved { base[k] = v; }
         }
     }
+    // Missing adapter keys default on (Terminal builds is on by default, card §15.3).
+    if let Some(a) = base["adapters"].as_object_mut() { a.entry("build").or_insert(json!(true)); }
+    // Silently dedupe / drop blocked entries from a loaded settings.json (UX S2.2).
+    base["watch"] = json!(crate::adapters::build::watch_from_settings(&base));
     base
 }
 
@@ -35,6 +39,15 @@ pub fn to_shortcut(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn load_dedupes_watch_and_defaults_build_on() {
+        let p = std::env::temp_dir().join(format!("ws-settings-{}.json", std::process::id()));
+        std::fs::write(&p, r#"{"adapters":{"cursor":false},"watch":[{"match":"make","kind":"command"},{"match":"Make ","kind":"command"}]}"#).unwrap();
+        let v = load(&p);
+        let _ = std::fs::remove_file(&p);
+        assert_eq!(v["adapters"]["build"], json!(true));
+        assert_eq!(v["watch"], json!([{ "match": "make", "kind": "command" }]));
+        assert_eq!(defaults()["watch"].as_array().unwrap().len(), 11);
+    }
     #[test] fn shortcut_mapping() { assert_eq!(to_shortcut("Ctrl+Alt+Shift+Esc"), "Control+Alt+Shift+Escape"); }
     #[test] fn load_merges_defaults() {
         let p = std::env::temp_dir().join(format!("aio-{}.json", std::process::id()));

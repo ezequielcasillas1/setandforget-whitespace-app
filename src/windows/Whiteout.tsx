@@ -12,7 +12,7 @@ import { FALLBACK_VERSE, versionLabel } from '../verses/client'
 const CAP_MINUTES = 20
 
 type ShowPayload = { seed: number }
-type ClearPayload = { reason: string; chime: boolean }
+type ClearPayload = { reason: string; chime: boolean; instant?: boolean }
 
 export default function Whiteout() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS)
@@ -51,10 +51,15 @@ export default function Whiteout() {
     void verses.start()
   }, [visible, seed, start, verses])
 
-  const end = useCallback(async (chime: boolean) => {
-    if (chime && !settings.chime.muted && settings.chime.volume > 0) await playChime(settings.chime.volume)
+  const [instant, setInstant] = useState(false)
+  // instant (needs-you, UX S2.3): no fade and no wait for the chime before clearing.
+  const end = useCallback(async (chime: boolean, instantClear = false) => {
+    const wantChime = chime && !settings.chime.muted && settings.chime.volume > 0
+    if (instantClear) { if (wantChime) void playChime(settings.chime.volume) }
+    else if (wantChime) await playChime(settings.chime.volume)
+    setInstant(instantClear)
     setVisible(false)
-    await new Promise((r) => setTimeout(r, 420))
+    if (!instantClear) await new Promise((r) => setTimeout(r, 420))
     verses.stop()
     reset()
     startedFor.current = null
@@ -64,7 +69,7 @@ export default function Whiteout() {
   useEffect(() => {
     const subs = [
       listen<ShowPayload>('whiteout:show', (p) => void begin(p.seed)),
-      listen<ClearPayload>('whiteout:clear', (p) => void end(p.chime)),
+      listen<ClearPayload>('whiteout:clear', (p) => void end(p.chime, !!p.instant)),
     ]
     if (!isTauri()) void begin(Date.now() & 0xffffffff) // browser preview: show straight away
     return () => { subs.forEach((s) => s.then((u) => u())) }
@@ -93,7 +98,7 @@ export default function Whiteout() {
   const v = verses.verse
 
   return (
-    <div className={`whiteout${visible ? ' visible' : ''}`}>
+    <div className={`whiteout${visible ? ' visible' : ''}${instant && !visible ? ' instant' : ''}`}>
       {settings.dustTheme && visible && <DustField breathRef={breathRef} reduced={reduced} />}
       <div className="stage">
         <div className="circle-wrap" style={{ width: diameter, height: diameter }}>
