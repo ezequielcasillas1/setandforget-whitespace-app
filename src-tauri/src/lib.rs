@@ -1,9 +1,11 @@
 pub mod adapters;
+pub mod hook_install;
+pub mod signal;
 pub mod settings;
 pub mod state;
 pub mod verses;
 
-use adapters::{build::BuildAdapter, cursor::CursorAdapter, Adapter};
+use adapters::{build::BuildAdapter, hooks::HookAdapter, Adapter};
 use serde_json::{json, Value};
 use state::{Action, Aggregator, Machine};
 use std::sync::{Arc, Mutex};
@@ -158,6 +160,13 @@ fn whiteout_faded(window: tauri::WebviewWindow) { let _ = window.hide(); }
 #[tauri::command]
 fn show_whiteout_test(app: AppHandle) { with_core(&app, |c| { let n = now_ms(c); (c.machine.show_now(n), ()) }); }
 
+#[tauri::command]
+async fn hook_status() -> Vec<Value> { hook_install::status_all() }
+#[tauri::command]
+async fn install_hook(id: String) -> Result<Vec<Value>, String> { hook_install::install(&id)?; Ok(hook_install::status_all()) }
+#[tauri::command]
+async fn remove_hook(id: String) -> Result<Vec<Value>, String> { hook_install::remove(&id)?; Ok(hook_install::status_all()) }
+
 fn client(core: &tauri::State<Shared>) -> Result<verses::client::Client, String> {
     let c = core.lock().unwrap();
     match &c.verses { Some(_) => verses::client::Client::from_env(), None => Err("verse API not configured".into()) }
@@ -197,7 +206,12 @@ pub fn run() {
             let shared: Shared = Arc::new(Mutex::new(Core {
                 machine: Machine::default(), agg: Aggregator::default(), origin: Instant::now(), paused: false, settings: settings.clone(), settings_path,
                 adapters: {
-                    let mut v: Vec<Box<dyn Adapter>> = vec![Box::new(CursorAdapter::new()), Box::new(BuildAdapter::new())];
+                    let mut v: Vec<Box<dyn Adapter>> = vec![
+                        Box::new(BuildAdapter::new()),
+                        Box::new(HookAdapter::real("claude", "Claude Code")), Box::new(HookAdapter::real("codex", "OpenAI Codex")),
+                        Box::new(HookAdapter::real("copilot", "GitHub Copilot")), Box::new(HookAdapter::real("cursor", "Cursor")),
+                        Box::new(HookAdapter::real("windsurf", "Windsurf")),
+                    ];
                     for a in v.iter_mut() { a.configure(&settings); }
                     v
                 }, verses: verses::client::Client::from_env().ok(),
@@ -256,7 +270,7 @@ pub fn run() {
             slog(&logdir, "loop started");
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_settings, save_settings, request_clear, whiteout_faded, show_whiteout_test, verse_refs, verse_translations, verse_get])
+        .invoke_handler(tauri::generate_handler![get_settings, save_settings, request_clear, whiteout_faded, show_whiteout_test, verse_refs, verse_translations, verse_get, hook_status, install_hook, remove_hook])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, ev| { if let tauri::RunEvent::ExitRequested { api, code, .. } = ev { if code.is_none() { api.prevent_exit(); } } });

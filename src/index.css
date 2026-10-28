@@ -63,3 +63,6 @@ body { background: transparent; }
 .settings input:disabled { opacity: 0.45; }
 .settings h3 { font-size: 12px; font-weight: 600; margin: 8px 0 2px; color: #6b6b66; }
 .settings p.hint { font-size: 12px; color: #6b6b66; margin: 2px 0 8px; }
+.ai-tool { border-top: 1px solid #eee; }
+.ai-tool .helper, .ai-tool .msg { margin: 0 0 6px; }
+.ai-name { display: flex; align-items: center; gap: 8px; }

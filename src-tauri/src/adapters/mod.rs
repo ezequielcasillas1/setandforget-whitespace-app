@@ -1,6 +1,6 @@
 //! Adapter interface (card §4). Per-app on/off maps to `id()`.
 pub mod build;
-pub mod cursor;
+pub mod hooks;
 
 use std::time::Instant;
 

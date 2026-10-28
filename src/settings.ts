@@ -27,7 +27,7 @@ export const DEFAULT_SETTINGS: Settings = {
   exercise: 'coherence',
   verseIntervalSec: [45, 60],
   verseFirstAtStart: true,
-  adapters: { cursor: true, build: true },
+  adapters: { build: true, cursor: true, claude: true, codex: true, copilot: true, windsurf: true, grokbot: false },
   watch: DEFAULT_WATCH,
   fallbackAccessibility: false,
   dustTheme: false,

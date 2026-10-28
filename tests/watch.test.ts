@@ -36,7 +36,7 @@ describe('watch list', () => {
   })
   it('settings default Terminal builds on and keep it on for old files', () => {
     expect(normalize({}).adapters.build).toBe(true)
-    expect(normalize({ adapters: { cursor: false } }).adapters).toEqual({ cursor: false, build: true })
+    expect(normalize({ adapters: { cursor: false } }).adapters).toMatchObject({ cursor: false, build: true })
     expect(normalize({ adapters: { cursor: true, build: false } }).adapters.build).toBe(false)
   })
 })

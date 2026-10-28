@@ -5,6 +5,24 @@ import { invoke, isTauri, listen } from '../tauri'
 import { validateHotkey } from '../hotkey'
 import { DEFAULT_ADD_KIND, DEFAULT_WATCH, addEntry, sameAsDefaults, type WatchKind } from '../watch'
 
+type HookStatus = { id: string; found: boolean; installed: boolean; trustPending: boolean }
+// Card 03 build order. Notes are the UX packet's proposed wording (slice 03b, B1).
+const AI_TOOLS: { id: string; name: string; note?: string }[] = [
+  { id: 'claude', name: 'Claude Code' },
+  { id: 'codex', name: 'OpenAI Codex' },
+  { id: 'copilot', name: 'GitHub Copilot', note: 'VS Code support is a preview.' },
+  { id: 'cursor', name: 'Cursor', note: "Clears when the run finishes. It can't tell when it's waiting for your approval." },
+  { id: 'windsurf', name: 'Windsurf', note: "Clears when the run finishes. It can't tell when it's waiting for your approval." },
+]
+
+export function hookStatusText(name: string, h: HookStatus | undefined, failed: boolean): string {
+  if (failed) return "Couldn't install. Your file wasn't changed."
+  if (!h) return ''
+  if (!h.found) return `Can't find ${name} on this PC`
+  if (!h.installed) return 'Hook not installed'
+  return h.id === 'codex' && h.trustPending ? 'Hook installed, waiting for trust in Codex' : 'Hook installed'
+}
+
 const timingText = (p: (typeof PATTERNS)[number]) => p.phases.map((x) => x.duration).join('-')
 
 export default function SettingsWindow() {
@@ -16,6 +34,14 @@ export default function SettingsWindow() {
   const [watchKind, setWatchKind] = useState<WatchKind>(DEFAULT_ADD_KIND)
   const [watchMsg, setWatchMsg] = useState<string | null>(null)
   const [confirmReset, setConfirmReset] = useState(false)
+  const [hooks, setHooks] = useState<HookStatus[]>([])
+  const [hookFailed, setHookFailed] = useState<string | null>(null)
+  useEffect(() => { if (isTauri()) void invoke<HookStatus[]>('hook_status').then(setHooks).catch(() => {}) }, [])
+  // Acts right away, no Save step (UX B1). A failure leaves the button as it was (B2).
+  const toggleHook = async (id: string, installed: boolean) => {
+    try { setHooks(await invoke<HookStatus[]>(installed ? 'remove_hook' : 'install_hook', { id })); setHookFailed(null) }
+    catch { setHookFailed(id) }
+  }
   const addWatch = () => {
     const r = addEntry(s.watch, watchDraft, watchKind)
     if (r.ok) { set('watch', r.list); setWatchDraft(''); setWatchMsg(null) } else setWatchMsg(r.message)
@@ -67,7 +93,6 @@ export default function SettingsWindow() {
       </div>
 
       <h2>Apps</h2>
-      <label className="row">Cursor<input type="checkbox" checked={s.adapters.cursor ?? true} onChange={(e) => set('adapters', { ...s.adapters, cursor: e.target.checked })} /></label>
       <label className="row">Terminal builds<input type="checkbox" checked={s.adapters.build ?? true} onChange={(e) => set('adapters', { ...s.adapters, build: e.target.checked })} /></label>
       <p className="helper">Whiteout comes on while a watched build or command is running.</p>
       <fieldset className="watch-list" disabled={s.adapters.build === false}>
@@ -99,6 +124,30 @@ export default function SettingsWindow() {
         )}
       </fieldset>
       <label className="row">Accessibility fallback (opt-in)<input type="checkbox" checked={s.fallbackAccessibility} onChange={(e) => set('fallbackAccessibility', e.target.checked)} /></label>
+
+      <h3>AI builders</h3>
+      {AI_TOOLS.map((t) => {
+        const h = hooks.find((x) => x.id === t.id)
+        const failed = hookFailed === t.id
+        return (
+          <div key={t.id} className="ai-tool">
+            <div className="row">
+              <label className="ai-name"><input type="checkbox" checked={s.adapters[t.id] ?? true} onChange={(e) => set('adapters', { ...s.adapters, [t.id]: e.target.checked })} /> {t.name}</label>
+              <button disabled={!h || !h.found} onClick={() => void toggleHook(t.id, !!h?.installed)}>{h?.installed ? 'Remove hook' : 'Install hook'}</button>
+            </div>
+            {t.note && <p className="helper">{t.note}</p>}
+            <p className={failed ? 'msg' : 'helper'}>{hookStatusText(t.name, h, failed)}</p>
+            {t.id === 'codex' && h?.installed && h.trustPending && <p className="helper">One more step: in Codex, open /hooks and trust Whitespace's hook.</p>}
+          </div>
+        )
+      })}
+      <div className="ai-tool">
+        <div className="row">
+          <label className="ai-name"><input type="checkbox" checked={s.adapters.grokbot ?? false} onChange={(e) => set('adapters', { ...s.adapters, grokbot: e.target.checked })} /> Grok Bot</label>
+          <button disabled>Install hook</button>
+        </div>
+        <p className="helper">Not available yet.</p>
+      </div>
 
       <h2>Look</h2>
       <h3>Show on the whiteout</h3>

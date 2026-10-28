@@ -4,6 +4,7 @@ version = "0.1.0-preview.1"
 edition = "2021"
 rust-version = "1.85"
 resolver = "3"
+default-run = "ai-overlay"
 
 [lib]
 name = "ai_overlay_lib"
@@ -12,6 +13,10 @@ path = "src/lib.rs"
 [[bin]]
 name = "ai-overlay"
 path = "src/main.rs"
+
+[[bin]]
+name = "ws-signal"
+path = "src/bin/ws-signal.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
