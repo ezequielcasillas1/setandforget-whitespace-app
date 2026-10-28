@@ -13,6 +13,17 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
+/// Appends one line to startup.log in the app's log folder (best effort).
+fn slog(dir: &Option<std::path::PathBuf>, msg: &str) {
+    use std::io::Write;
+    let Some(d) = dir else { return };
+    let _ = std::fs::create_dir_all(d);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(d.join("startup.log")) {
+        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let _ = writeln!(f, "{t} {msg}");
+    }
+}
+
 struct Core {
     machine: Machine,
     agg: Aggregator,
@@ -45,12 +56,13 @@ fn create_whiteouts(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-fn apply(app: &AppHandle, core: &Core, action: Action) {
+/// Window work only. Never call while holding the Core lock: window calls on
+/// Windows wait for the main thread, which may itself be waiting on the lock.
+fn apply(app: &AppHandle, only_active: bool, action: Action) {
     match action {
         Action::None => {}
         Action::Show => {
             let seed: u32 = rand::random();
-            let only_active = core.settings["monitors"] == "active";
             let active = app.cursor_position().ok().and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten());
             for w in whiteouts(app) {
                 let on_active = match (&active, w.current_monitor().ok().flatten()) {
@@ -75,9 +87,12 @@ fn apply(app: &AppHandle, core: &Core, action: Action) {
 
 fn with_core<R>(app: &AppHandle, f: impl FnOnce(&mut Core) -> (Action, R)) -> R {
     let shared = app.state::<Shared>().inner().clone();
-    let mut c = shared.lock().unwrap();
-    let (a, r) = f(&mut c);
-    apply(app, &c, a);
+    let (a, only_active, r) = {
+        let mut c = shared.lock().unwrap();
+        let (a, r) = f(&mut c);
+        (a, c.settings["monitors"] == "active", r)
+    };
+    apply(app, only_active, a);
     r
 }
 
@@ -90,11 +105,11 @@ fn register_hotkey(app: &AppHandle, combo: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn get_settings(core: tauri::State<Shared>) -> Value { core.lock().unwrap().settings.clone() }
+async fn get_settings(core: tauri::State<'_, Shared>) -> Result<Value, String> { Ok(core.lock().unwrap().settings.clone()) }
 
 /// Returns a warning string for Settings to show (hotkey conflict), or null.
 #[tauri::command]
-fn save_settings(app: AppHandle, settings: Value) -> Result<Option<String>, String> {
+async fn save_settings(app: AppHandle, settings: Value) -> Result<Option<String>, String> {
     let combo = settings["panicHotkey"].as_str().unwrap_or("Ctrl+Alt+Shift+Esc").to_string();
     {
         let shared = app.state::<Shared>().inner().clone();
@@ -145,6 +160,10 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             let handle = app.handle().clone();
+            let logdir = app.path().app_log_dir().ok();
+            slog(&logdir, &format!("start v{}", app.package_info().version));
+            { let ld = logdir.clone(); let prev = std::panic::take_hook();
+              std::panic::set_hook(Box::new(move |i| { slog(&ld, &format!("panic: {i}")); prev(i); })); }
             let settings_path = app.path().app_config_dir()?.join("settings.json");
             let settings = settings::load(&settings_path);
             let shared: Shared = Arc::new(Mutex::new(Core {
@@ -156,7 +175,9 @@ pub fn run() {
                 }, verses: verses::client::Client::from_env().ok(),
             }));
             app.manage(shared.clone());
-            create_whiteouts(&handle)?;
+            slog(&logdir, "state ready");
+            if let Err(e) = create_whiteouts(&handle) { slog(&logdir, &format!("whiteouts failed: {e}")); return Err(e.into()); }
+            slog(&logdir, "whiteouts created");
             if register_hotkey(&handle, settings["panicHotkey"].as_str().unwrap_or("Ctrl+Alt+Shift+Esc")).is_err() {
                 eprintln!("panic hotkey registration failed; exit button, cap and quiet timeout still apply");
             }
@@ -174,6 +195,7 @@ pub fn run() {
                     "quit" => app.exit(0),
                     _ => {}
                 }).build(app)?;
+            slog(&logdir, "tray ready");
 
             // Core loop: poll adapters, run timers (3 s delay, 20 min cap, 90 s quiet).
             std::thread::spawn(move || loop {
@@ -194,8 +216,11 @@ pub fn run() {
                     }
                 }
                 actions.push(c.machine.tick(now));
-                for a in actions { apply(&handle, &c, a); }
+                let only_active = c.settings["monitors"] == "active";
+                drop(c);
+                for a in actions { apply(&handle, only_active, a); }
             });
+            slog(&logdir, "loop started");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![get_settings, save_settings, request_clear, whiteout_faded, show_whiteout_test, verse_refs, verse_translations, verse_get])
