@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { PATTERNS } from '../breathing/patterns'
 import { DEFAULT_SETTINGS, loadSettings, normalize, saveSettings, type Settings } from '../settings'
 import { invoke, isTauri, listen } from '../tauri'
-import { validateHotkey } from '../hotkey'
+import { validateHotkey, validateQuitHotkey } from '../hotkey'
 import { DEFAULT_ADD_KIND, DEFAULT_WATCH, addEntry, sameAsDefaults, type WatchKind } from '../watch'
 
 type HookStatus = { id: string; found: boolean; installed: boolean; trustPending: boolean }
@@ -40,6 +40,8 @@ export default function SettingsWindow() {
   const [msg, setMsg] = useState<string | null>(null)
   const [hotkeyDraft, setHotkeyDraft] = useState(DEFAULT_SETTINGS.panicHotkey)
   const [hotkeyMsg, setHotkeyMsg] = useState<string | null>(null)
+  const [quitDraft, setQuitDraft] = useState(DEFAULT_SETTINGS.quitHotkey)
+  const [quitMsg, setQuitMsg] = useState<string | null>(null)
   const [watchDraft, setWatchDraft] = useState('')
   const [watchKind, setWatchKind] = useState<WatchKind>(DEFAULT_ADD_KIND)
   const [watchMsg, setWatchMsg] = useState<string | null>(null)
@@ -93,7 +95,7 @@ export default function SettingsWindow() {
     if (r.ok) { set('watch', r.list); setWatchDraft(''); setWatchMsg(null) } else setWatchMsg(r.message)
   }
   const resetWatch = () => { set('watch', DEFAULT_WATCH.map((e) => ({ ...e }))); setConfirmReset(false) }
-  useEffect(() => { void loadSettings().then((x) => { setS(x); setHotkeyDraft(x.panicHotkey) }) }, [])
+  useEffect(() => { void loadSettings().then((x) => { setS(x); setHotkeyDraft(x.panicHotkey); setQuitDraft(x.quitHotkey) }) }, [])
   // Tray checkmarks save straight away; keep this window in sync without touching unsaved edits.
   useEffect(() => {
     const sub = listen<Settings['display']>('settings:display', (d) => setS((p) => ({ ...p, display: d })))
@@ -108,12 +110,18 @@ export default function SettingsWindow() {
     if (r.ok) { set('panicHotkey', r.value); setHotkeyDraft(r.value); setHotkeyMsg(null) }
     else { setHotkeyDraft(s.panicHotkey); setHotkeyMsg(r.message) }
   }
+  const commitQuit = () => {
+    const r = validateQuitHotkey(quitDraft, s.panicHotkey)
+    if (r.ok) { set('quitHotkey', r.value); setQuitDraft(r.value); setQuitMsg(null) }
+    else { setQuitDraft(s.quitHotkey); setQuitMsg(r.message) }
+  }
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => setS((p) => ({ ...p, [k]: v }))
   const save = async () => {
     // Clamp the verse interval before saving: min ≥ 5 s, max ≥ min (Kit bug 2).
     const clamped = normalize(s)
     setS(clamped)
     const warning = await saveSettings(clamped)
+    if (warning === 'That combo is in use. Pick another.') { void loadSettings().then((x) => { setS(x); setQuitDraft(x.quitHotkey) }) }
     setMsg(warning ?? 'Saved.')
   }
   return (
@@ -221,6 +229,8 @@ export default function SettingsWindow() {
       <h2>Exit and sound</h2>
       <label className="row">Panic hotkey<input type="text" value={hotkeyDraft} onChange={(e) => setHotkeyDraft(e.target.value)} onBlur={commitHotkey} /></label>
       {hotkeyMsg && <p className="msg">{hotkeyMsg}</p>}
+      <label className="row">Quit hotkey<input type="text" value={quitDraft} onChange={(e) => setQuitDraft(e.target.value)} onBlur={commitQuit} /></label>
+      {quitMsg && <p className="msg">{quitMsg}</p>}
       <label className="row">Chime volume<input type="range" min={0} max={1} step={0.05} value={s.chime.volume} disabled={s.chime.muted} onChange={(e) => set('chime', { ...s.chime, volume: +e.target.value })} /></label>
       <label className="row">Mute chime<input type="checkbox" checked={s.chime.muted} onChange={(e) => set('chime', { ...s.chime, muted: e.target.checked })} /></label>
       {msg && <p className="msg">{msg}</p>}
@@ -231,7 +241,7 @@ export default function SettingsWindow() {
         {isTauri() && <button onClick={() => void invoke('show_whiteout_test')}>Show whiteout now (test)</button>}
         {!isTauri() && <button onClick={() => { location.hash = 'whiteout-preview'; location.reload() }}>Preview whiteout</button>}
       </div>
-      {isTauri() && <p className="helper">Quit closes Whitespace completely. Unsaved changes aren't kept.</p>}
+      {isTauri() && <p className="helper">Quit closes Whitespace completely (or press {s.quitHotkey}). Unsaved changes aren't kept.</p>}
     </div>
   )
 }

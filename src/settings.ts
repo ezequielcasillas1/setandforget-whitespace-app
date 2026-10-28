@@ -1,7 +1,7 @@
 // Settings shape from card §8 / UX packet §1.3. Stored locally (settings.json in the app data dir via Rust;
 // localStorage when running in a plain browser with `npm run dev`).
 import { isTauri, invoke } from './tauri'
-import { DEFAULT_HOTKEY, validateHotkey } from './hotkey'
+import { DEFAULT_HOTKEY, DEFAULT_QUIT_HOTKEY, validateHotkey, validateQuitHotkey } from './hotkey'
 import { DEFAULT_WATCH, normalizeWatch, type WatchEntry } from './watch'
 
 export type Settings = {
@@ -16,6 +16,7 @@ export type Settings = {
   reducedMotion: 'system' | 'on' | 'off'
   monitors: 'all' | 'active'
   panicHotkey: string
+  quitHotkey: string
   /** Fixed in the MVP (not shown in settings). */
   adapterQuietSec: 90
   chime: { muted: boolean; volume: number }
@@ -34,6 +35,7 @@ export const DEFAULT_SETTINGS: Settings = {
   reducedMotion: 'system',
   monitors: 'all',
   panicHotkey: DEFAULT_HOTKEY,
+  quitHotkey: DEFAULT_QUIT_HOTKEY,
   adapterQuietSec: 90,
   chime: { muted: false, volume: 0.25 },
   display: { verses: true, breathing: true, screenMode: 'full' },
@@ -48,6 +50,8 @@ export function normalize(raw: Partial<Settings> | null | undefined): Settings {
   s.chime = { muted: !!c.muted, volume: Math.min(1, Math.max(0, Number(c.volume ?? 0.25))) }
   const hk = validateHotkey(String(s.panicHotkey ?? ''))
   s.panicHotkey = hk.ok ? hk.value : DEFAULT_HOTKEY
+  const qk = validateQuitHotkey(String(s.quitHotkey ?? DEFAULT_QUIT_HOTKEY), s.panicHotkey)
+  s.quitHotkey = qk.ok ? qk.value : (s.panicHotkey === DEFAULT_QUIT_HOTKEY ? 'Ctrl+Alt+Shift+F12' : DEFAULT_QUIT_HOTKEY)
   s.adapters = { ...DEFAULT_SETTINGS.adapters, ...(s.adapters && typeof s.adapters === 'object' ? s.adapters : {}) }
   const d = (s.display && typeof s.display === 'object' ? s.display : {}) as Partial<Settings['display']>
   s.display = { verses: d.verses !== false, breathing: d.breathing !== false, screenMode: d.screenMode === 'fit' ? 'fit' : 'full' }

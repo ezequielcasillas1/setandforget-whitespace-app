@@ -142,12 +142,24 @@ fn with_core<R>(app: &AppHandle, f: impl FnOnce(&mut Core) -> (Action, R)) -> R 
     r
 }
 
-fn register_hotkey(app: &AppHandle, combo: &str) -> Result<(), String> {
+/// Card §19: one place registers both global combos (unregister_all would otherwise drop the other).
+/// Returns (panic_failed, quit_failed). A quit combo equal to panic is skipped.
+fn register_hotkeys(app: &AppHandle, panic: &str, quit: &str) -> (bool, bool) {
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
-    gs.on_shortcut(settings::to_shortcut(combo).as_str(), |app, _s, ev| {
+    let p = gs.on_shortcut(settings::to_shortcut(panic).as_str(), |app, _s, ev| {
         if ev.state() == ShortcutState::Pressed { with_core(app, |c| (c.machine.panic(), ())); }
-    }).map_err(|e| e.to_string())
+    }).is_err();
+    let q = if settings::to_shortcut(quit) == settings::to_shortcut(panic) { true } else {
+        gs.on_shortcut(settings::to_shortcut(quit).as_str(), |app, _s, ev| {
+            if ev.state() == ShortcutState::Pressed { app.exit(0); }
+        }).is_err()
+    };
+    (p, q)
+}
+
+fn combos(v: &Value) -> (String, String) {
+    (v["panicHotkey"].as_str().unwrap_or("Ctrl+Alt+Shift+Esc").to_string(), v["quitHotkey"].as_str().unwrap_or("Ctrl+Alt+Shift+Q").to_string())
 }
 
 /// Card §19: same full exit as the tray's Quit.
@@ -160,16 +172,32 @@ async fn get_settings(core: tauri::State<'_, Shared>) -> Result<Value, String> {
 /// Returns a warning string for Settings to show (hotkey conflict), or null.
 #[tauri::command]
 async fn save_settings(app: AppHandle, settings: Value) -> Result<Option<String>, String> {
-    let combo = settings["panicHotkey"].as_str().unwrap_or("Ctrl+Alt+Shift+Esc").to_string();
+    let (panic, quit) = combos(&settings);
+    let prev_quit;
     {
         let shared = app.state::<Shared>().inner().clone();
         let mut c = shared.lock().unwrap();
+        prev_quit = combos(&c.settings).1;
         settings::save(&c.settings_path, &settings)?;
         for a in c.adapters.iter_mut() { a.configure(&settings); }
         c.settings = settings;
     }
     { let s = app.state::<Shared>().lock().unwrap().settings.clone(); sync_display_items(&app, &s); }
-    Ok(register_hotkey(&app, &combo).err().map(|_| "This shortcut is in use by another app. The hotkey will still exit the whiteout.".into()))
+    let (p_err, q_err) = register_hotkeys(&app, &panic, &quit);
+    if q_err && prev_quit != quit {
+        // Taken: keep the old quit combo working and saved (UX §19 addendum).
+        let _ = register_hotkeys(&app, &panic, &prev_quit);
+        let mut settings = app.state::<Shared>().lock().unwrap().settings.clone();
+        settings["quitHotkey"] = json!(prev_quit);
+        let shared = app.state::<Shared>().inner().clone();
+        let mut c = shared.lock().unwrap();
+        let _ = settings::save(&c.settings_path, &settings);
+        c.settings = settings;
+        return Ok(Some("That combo is in use. Pick another.".into()));
+    }
+    if p_err { return Ok(Some("This shortcut is in use by another app. The hotkey will still exit the whiteout.".into())); }
+    if q_err { return Ok(Some("That combo is in use. Pick another.".into())); }
+    Ok(None)
 }
 
 #[tauri::command]
@@ -252,9 +280,10 @@ pub fn run() {
             slog(&logdir, "state ready");
             if let Err(e) = create_whiteouts(&handle) { slog(&logdir, &format!("whiteouts failed: {e}")); return Err(e.into()); }
             slog(&logdir, "whiteouts created");
-            if register_hotkey(&handle, settings["panicHotkey"].as_str().unwrap_or("Ctrl+Alt+Shift+Esc")).is_err() {
-                eprintln!("panic hotkey registration failed; exit button, cap and quiet timeout still apply");
-            }
+            let (hp, hq) = combos(&settings);
+            let (pe, qe) = register_hotkeys(&handle, &hp, &hq);
+            if pe { eprintln!("panic hotkey registration failed; exit button, cap and quiet timeout still apply"); }
+            if qe { eprintln!("quit hotkey registration failed; tray Quit still works"); }
 
             let settings_i = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
             let pause_i = CheckMenuItem::with_id(app, "pause", "Pause adapters", true, false, None::<&str>)?;

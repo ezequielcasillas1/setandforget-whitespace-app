@@ -23,3 +23,10 @@ describe('panic hotkey', () => {
     expect(s.adapterQuietSec).toBe(90)
   })
 })
+
+import { validateQuitHotkey, SAME_AS_PANIC_MESSAGE } from '../src/hotkey'
+describe('quit hotkey (card §19)', () => {
+  it('defaults to Ctrl+Alt+Shift+Q', () => expect(normalize({}).quitHotkey).toBe('Ctrl+Alt+Shift+Q'))
+  it('rejects the panic combo', () => expect(validateQuitHotkey('ctrl+alt+shift+esc', 'Ctrl+Alt+Shift+Esc')).toEqual({ ok: false, message: SAME_AS_PANIC_MESSAGE }))
+  it('accepts a different combo', () => expect(validateQuitHotkey('ctrl+alt+q', 'Ctrl+Alt+Shift+Esc')).toEqual({ ok: true, value: 'Ctrl+Alt+Q' }))
+})

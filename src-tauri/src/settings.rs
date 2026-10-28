@@ -5,7 +5,7 @@ use std::path::PathBuf;
 pub fn defaults() -> Value {
     json!({ "exercise": "coherence", "verseIntervalSec": [45, 60], "verseFirstAtStart": true,
       "adapters": { "build": true, "cursor": true, "claude": true, "codex": true, "copilot": true, "windsurf": true, "grokbot": false, "cursorCloud": false }, "watch": crate::adapters::build::default_watch(), "fallbackAccessibility": false, "dustTheme": false,
-      "reducedMotion": "system", "monitors": "all", "panicHotkey": "Ctrl+Alt+Shift+Esc",
+      "reducedMotion": "system", "monitors": "all", "panicHotkey": "Ctrl+Alt+Shift+Esc", "quitHotkey": "Ctrl+Alt+Shift+Q",
       "adapterQuietSec": 90, "chime": { "muted": false, "volume": 0.25 },
       "display": { "verses": true, "breathing": true, "screenMode": "full" } })
 }
@@ -71,6 +71,7 @@ mod tests {
         let v = load(&p);
         assert_eq!(v["dustTheme"], true);
         assert_eq!(v["panicHotkey"], "Ctrl+Alt+Shift+Esc");
+        assert_eq!(v["quitHotkey"], "Ctrl+Alt+Shift+Q");
         assert_eq!(v["display"], json!({ "verses": true, "breathing": true, "screenMode": "full" }));
         let _ = std::fs::remove_file(p);
     }

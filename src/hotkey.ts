@@ -1,5 +1,7 @@
 // Panic hotkey parsing/validation (card §3 2b; UX packet §1.3 and §4).
 export const DEFAULT_HOTKEY = 'Ctrl+Alt+Shift+Esc'
+export const DEFAULT_QUIT_HOTKEY = 'Ctrl+Alt+Shift+Q'
+export const SAME_AS_PANIC_MESSAGE = "That's your panic hotkey. Pick a different combo."
 export const REJECTED_MESSAGE = 'Windows reserves this shortcut. Choose another.'
 export const CONFLICT_MESSAGE = 'This shortcut is in use by another app. The hotkey will still exit the whiteout.'
 
@@ -39,4 +41,13 @@ export function validateHotkey(input: string): HotkeyResult {
   if (!c) return { ok: false, message: 'Use modifiers plus one key, e.g. Ctrl+Alt+Shift+Esc.' }
   if (isReserved(c)) return { ok: false, message: REJECTED_MESSAGE }
   return { ok: true, value: formatHotkey(c) }
+}
+
+/** Card §19: the quit combo must be valid and differ from the panic combo. */
+export function validateQuitHotkey(input: string, panic: string): HotkeyResult {
+  const r = validateHotkey(input)
+  if (!r.ok) return r
+  const p = validateHotkey(panic)
+  if (p.ok && p.value === r.value) return { ok: false, message: SAME_AS_PANIC_MESSAGE }
+  return r
 }
