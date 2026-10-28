@@ -16,4 +16,6 @@ pub trait Adapter: Send {
     fn last_signal_at(&self) -> Instant;
     /// Apply settings (e.g. the build adapter's watch list). Default: nothing.
     fn configure(&mut self, _settings: &serde_json::Value) {}
+    /// Drop any tracked work (adapter turned off). Default: nothing.
+    fn reset(&mut self) {}
 }

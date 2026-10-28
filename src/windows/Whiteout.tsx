@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useBreathing } from '../breathing/useBreathing'
 import { findPattern } from '../breathing/patterns'
 import { playChime } from '../chime'
@@ -22,8 +22,12 @@ export default function Whiteout() {
   const { state, breathRef, start, reset, setOnPhaseChange } = useBreathing(pattern, CAP_MINUTES)
   const stateRef = useRef(state)
   stateRef.current = state
-  const timing = { minSec: settings.verseIntervalSec[0], maxSec: settings.verseIntervalSec[1] }
+  const [minSec, maxSec] = settings.verseIntervalSec
+  const timing = useMemo(() => ({ minSec, maxSec }), [minSec, maxSec])
   const verses = useVerses(seed, timing)
+  const { start: startVerses, stop: stopVerses } = verses
+  const settingsRef = useRef(settings)
+  settingsRef.current = settings
   const circleRef = useRef<HTMLDivElement>(null)
   const reduced = prefersReducedMotion(settings)
   const [size, setSize] = useState(() => Math.min(innerWidth, innerHeight))
@@ -48,32 +52,41 @@ export default function Whiteout() {
     if (!visible || startedFor.current === seed) return
     startedFor.current = seed
     start()
-    void verses.start()
-  }, [visible, seed, start, verses])
+    void startVerses()
+  }, [visible, seed, start, startVerses])
 
   const [instant, setInstant] = useState(false)
   // instant (needs-you, UX S2.3): no fade and no wait for the chime before clearing.
   const end = useCallback(async (chime: boolean, instantClear = false) => {
-    const wantChime = chime && !settings.chime.muted && settings.chime.volume > 0
-    if (instantClear) { if (wantChime) void playChime(settings.chime.volume) }
-    else if (wantChime) await playChime(settings.chime.volume)
+    const c = settingsRef.current.chime
+    const wantChime = chime && !c.muted && c.volume > 0
+    if (instantClear) { if (wantChime) void playChime(c.volume) }
+    else if (wantChime) await playChime(c.volume)
     setInstant(instantClear)
     setVisible(false)
     if (!instantClear) await new Promise((r) => setTimeout(r, 420))
-    verses.stop()
+    stopVerses()
     reset()
     startedFor.current = null
     if (isTauri()) await invoke('whiteout_faded')
-  }, [settings, verses, reset])
+  }, [stopVerses, reset])
 
+  // Subscribe once; handlers go through refs so the listeners are never torn down (Kit bug 1).
+  const beginRef = useRef(begin); beginRef.current = begin
+  const endRef = useRef(end); endRef.current = end
   useEffect(() => {
     const subs = [
-      listen<ShowPayload>('whiteout:show', (p) => void begin(p.seed)),
-      listen<ClearPayload>('whiteout:clear', (p) => void end(p.chime, !!p.instant)),
+      listen<ShowPayload>('whiteout:show', (p) => void beginRef.current(p.seed)),
+      listen<ClearPayload>('whiteout:clear', (p) => void endRef.current(p.chime, !!p.instant)),
     ]
-    if (!isTauri()) void begin(Date.now() & 0xffffffff) // browser preview: show straight away
     return () => { subs.forEach((s) => s.then((u) => u())) }
-  }, [begin, end])
+  }, [])
+  const previewed = useRef(false)
+  useEffect(() => {
+    if (isTauri() || previewed.current) return
+    previewed.current = true
+    void beginRef.current(Date.now() & 0xffffffff) // browser preview: show straight away, once
+  }, [])
 
   // Circle scaling from breathRef each frame (static when reduced motion is on).
   useEffect(() => {

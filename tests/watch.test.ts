@@ -9,7 +9,7 @@ describe('watch list', () => {
   it('blocks duplicates (trimmed, case-insensitive, same kind)', () => {
     const r = addEntry(DEFAULT_WATCH, '  Cargo Build ', 'command')
     expect(r).toEqual({ ok: false, message: "That's already on the list." })
-    expect(addEntry(DEFAULT_WATCH, 'tsc', 'process').ok).toBe(true)
+    expect(addEntry(DEFAULT_WATCH, 'tsc.exe', 'command').ok).toBe(true)
   })
   it('blocks shells as process, with or without .exe', () => {
     for (const s of ['cmd.exe', 'powershell.exe', 'pwsh', 'BASH.EXE', 'node.exe']) {
@@ -32,11 +32,18 @@ describe('watch list', () => {
   it('knows when the list matches defaults', () => {
     expect(sameAsDefaults(DEFAULT_WATCH.map((e) => ({ ...e })))).toBe(true)
     expect(sameAsDefaults(DEFAULT_WATCH.slice(1))).toBe(false)
-    expect(DEFAULT_WATCH).toHaveLength(11)
+    expect(DEFAULT_WATCH).toHaveLength(10)
   })
   it('settings default Terminal builds on and keep it on for old files', () => {
     expect(normalize({}).adapters.build).toBe(true)
     expect(normalize({ adapters: { cursor: false } }).adapters).toEqual({ cursor: false, build: true })
     expect(normalize({ adapters: { cursor: true, build: false } }).adapters.build).toBe(false)
+  })
+})
+
+describe('verse interval clamp (Kit bug 2)', () => {
+  it('raises max to min and min to 5 before saving', () => {
+    expect(normalize({ verseIntervalSec: [60, 30] }).verseIntervalSec).toEqual([60, 60])
+    expect(normalize({ verseIntervalSec: [1, 2] }).verseIntervalSec).toEqual([5, 5])
   })
 })

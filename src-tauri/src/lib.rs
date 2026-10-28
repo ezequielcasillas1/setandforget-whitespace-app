@@ -137,7 +137,7 @@ async fn verse_get(core: tauri::State<'_, Shared>, reference: String, translatio
 fn open_settings(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("settings") { let _ = w.show(); let _ = w.set_focus(); return; }
     let _ = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("index.html".into()))
-        .title("AI Overlay settings").inner_size(640.0, 820.0).build();
+        .title("Whitespace settings").inner_size(640.0, 820.0).build();
 }
 
 pub fn run() {
@@ -166,7 +166,7 @@ pub fn run() {
             let test_i = MenuItem::with_id(app, "test", "Show whiteout now (test)", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&settings_i, &pause_i, &test_i, &quit_i])?;
-            TrayIconBuilder::new().icon(app.default_window_icon().unwrap().clone()).tooltip("AI Overlay").menu(&menu)
+            TrayIconBuilder::new().icon(app.default_window_icon().unwrap().clone()).tooltip("Whitespace").menu(&menu)
                 .on_menu_event(move |app, ev| match ev.id().as_ref() {
                     "settings" => open_settings(app),
                     "pause" => with_core(app, |c| { c.paused = !c.paused; (if c.paused { c.machine.disable() } else { Action::None }, ()) }),
@@ -185,7 +185,7 @@ pub fn run() {
                     let enabled = c.settings["adapters"].clone();
                     let mut reports = vec![];
                     for a in c.adapters.iter_mut() {
-                        if enabled[a.id()].as_bool() == Some(false) { reports.push((a.id(), None)); continue; }
+                        if enabled[a.id()].as_bool() == Some(false) { a.reset(); reports.push((a.id(), None)); continue; }
                         if let Some(s) = a.poll() { reports.push((a.id(), Some(s))); }
                     }
                     let Core { machine, agg, .. } = &mut *c;

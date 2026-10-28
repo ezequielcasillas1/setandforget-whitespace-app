@@ -24,24 +24,44 @@ pub struct WatchEntry {
 
 impl WatchEntry {
     pub fn new(p: &str, kind: Kind) -> Self { Self { pattern: p.to_string(), kind } }
-    /// `process`: exe name exact, case-insensitive. `command`: case-insensitive substring of the full command line.
+    /// `process`: exe name exact, case-insensitive. `command`: whole words, case-insensitive — the entry's
+    /// words must appear consecutively in the command line's words (card §15.3), so `tsc` ≠ `tsconfig`.
     pub fn matches(&self, name: &str, cmdline: &str) -> bool {
         let p = self.pattern.trim().to_lowercase();
         if p.is_empty() { return false; }
         match self.kind {
             Kind::Process => name.to_lowercase() == p,
-            Kind::Command => cmdline.to_lowercase().contains(&p),
+            Kind::Command => {
+                let want = words(&p);
+                if want.is_empty() { return false; }
+                let have = words(cmdline);
+                have.windows(want.len()).any(|w| w == want.as_slice())
+            }
         }
     }
 }
 
-/// Card §15.3 default list. Kinds are not given in the card (UX S2.5 TBD 1): entries ending in `.exe`
-/// are `process`, everything else is `command`. `gradle`/`gradlew` is split into two entries.
+/// Lowercase words: runs of letters/digits; everything else (spaces, `\`, `/`, `.`, `-`, quotes) separates.
+fn words(s: &str) -> Vec<String> {
+    s.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(String::from).collect()
+}
+
+/// Never a build (card §15.3): the long-lived Gradle daemon, and `tsc` in watch mode.
+pub fn is_excluded(name: &str, cmdline: &str) -> bool {
+    let c = cmdline.to_lowercase();
+    if c.contains("gradledaemon") || c.contains("org.gradle.launcher.daemon") { return true; }
+    let n = name.to_lowercase();
+    let is_tsc = n == "tsc" || n == "tsc.exe" || words(&c).iter().any(|w| w == "tsc");
+    is_tsc && c.split_whitespace().any(|a| a == "--watch" || a == "-w" || a.starts_with("--watch="))
+}
+
+/// Card §15.3 default list (rev with Sol's edits): `.exe` entries are `process` (`msbuild.exe`, `tsc.exe`),
+/// everything else is a whole-word `command`.
 pub fn default_watch() -> Vec<WatchEntry> {
-    ["cargo build", "cargo run", "npm run build", "pnpm build", "yarn build", "gradle", "gradlew", "dotnet build"]
+    ["cargo build", "cargo run", "npm run build", "pnpm build", "yarn build", "gradle", "dotnet build"]
         .iter().map(|p| WatchEntry::new(p, Kind::Command))
-        .chain(std::iter::once(WatchEntry::new("msbuild.exe", Kind::Process)))
-        .chain(["tsc", "vite build"].iter().map(|p| WatchEntry::new(p, Kind::Command)))
+        .chain(["msbuild.exe", "tsc.exe"].iter().map(|p| WatchEntry::new(p, Kind::Process)))
+        .chain(std::iter::once(WatchEntry::new("vite build", Kind::Command)))
         .collect()
 }
 
@@ -88,6 +108,8 @@ pub trait ProcessSource: Send {
     fn open(&mut self, pid: u32) -> bool;
     /// None while running; Some(exit code) once it has ended. Releases the handle on exit.
     fn exit_code(&mut self, pid: u32) -> Option<i64>;
+    /// Stop holding the process without reading its exit (Windows: CloseHandle).
+    fn release(&mut self, pid: u32);
 }
 
 /// Pure tracker over a `ProcessSource`.
@@ -95,23 +117,30 @@ pub struct Tracker<S: ProcessSource> {
     pub source: S,
     pub watch: Vec<WatchEntry>,
     tracked: HashMap<u32, ()>,
-    failed: bool,
 }
 
 impl<S: ProcessSource> Tracker<S> {
-    pub fn new(source: S, watch: Vec<WatchEntry>) -> Self { Self { source, watch, tracked: HashMap::new(), failed: false } }
+    pub fn new(source: S, watch: Vec<WatchEntry>) -> Self { Self { source, watch, tracked: HashMap::new() } }
     pub fn tracked_count(&self) -> usize { self.tracked.len() }
 
-    /// One poll. Some(Working) while any watched process lives (each poll is a signal, card §15.1);
-    /// Some(Done | NeedsYou) once the last one ends (NeedsYou if any of them exited non-zero); None when idle.
+    /// Drop every tracked process and its handle (Terminal builds turned off, or the watch list changed),
+    /// so no stale Done/NeedsYou or chime comes later.
+    pub fn reset(&mut self) {
+        for pid in std::mem::take(&mut self.tracked).into_keys() { self.source.release(pid); }
+    }
+
+    /// One poll. Some(NeedsYou) on the poll a watched process exits non-zero, even if another is still
+    /// running (card §15.2); otherwise Some(Working) while any lives (each poll is a signal, card §15.1),
+    /// Some(Done) once the last one ends, None when idle.
     pub fn poll(&mut self) -> Option<ToolState> {
         let had_any = !self.tracked.is_empty();
+        let mut failed = false;
         // Exits first, so a reused PID is not mistaken for the old process.
         let pids: Vec<u32> = self.tracked.keys().copied().collect();
         for pid in pids {
             if let Some(code) = self.source.exit_code(pid) {
                 self.tracked.remove(&pid);
-                if exit_to_state(code) == ToolState::NeedsYou { self.failed = true; }
+                if exit_to_state(code) == ToolState::NeedsYou { failed = true; }
             }
         }
         let procs = self.source.list();
@@ -120,7 +149,7 @@ impl<S: ProcessSource> Tracker<S> {
         let mut new = vec![];
         for p in &procs {
             if self.tracked.contains_key(&p.pid) { continue; }
-            if !self.watch.iter().any(|w| w.matches(&p.name, &p.cmdline)) { continue; }
+            if is_excluded(&p.name, &p.cmdline) || !self.watch.iter().any(|w| w.matches(&p.name, &p.cmdline)) { continue; }
             new.push(p.pid);
         }
         let mut sorted = new.clone();
@@ -139,11 +168,9 @@ impl<S: ProcessSource> Tracker<S> {
             if self.source.open(pid) { self.tracked.insert(pid, ()); }
             else { eprintln!("build adapter: can't open pid {pid}, skipped"); }
         }
+        if failed { return Some(ToolState::NeedsYou); }
         if !self.tracked.is_empty() { return Some(ToolState::Working); }
-        if had_any {
-            let failed = std::mem::take(&mut self.failed);
-            return Some(if failed { ToolState::NeedsYou } else { ToolState::Done });
-        }
+        if had_any { return Some(ToolState::Done); }
         None
     }
 }
@@ -209,6 +236,12 @@ impl ProcessSource for SysProcessSource {
         self.handles.remove(&pid);
         Some(if ok { code as i32 as i64 } else { 1 })
     }
+    #[cfg(windows)]
+    fn release(&mut self, pid: u32) {
+        if let Some(h) = self.handles.remove(&pid) { unsafe { let _ = windows::Win32::Foundation::CloseHandle(h); } }
+    }
+    #[cfg(not(windows))]
+    fn release(&mut self, _pid: u32) {}
     /// Non-Windows (dev only): no handle, so the exit code is unknown and an ended process counts as 0.
     #[cfg(not(windows))]
     fn exit_code(&mut self, pid: u32) -> Option<i64> { if self.alive.contains(&pid) { None } else { Some(0) } }
@@ -230,7 +263,14 @@ impl<S: ProcessSource> Adapter for BuildAdapter<S> {
         r
     }
     fn last_signal_at(&self) -> Instant { self.last }
-    fn configure(&mut self, settings: &serde_json::Value) { self.tracker.watch = watch_from_settings(settings); }
+    /// Turning Terminal builds off or changing the watch list drops everything tracked (Kit bug 7).
+    fn configure(&mut self, settings: &serde_json::Value) {
+        let watch = watch_from_settings(settings);
+        let enabled = settings["adapters"]["build"].as_bool() != Some(false);
+        if !enabled || watch != self.tracker.watch { self.tracker.reset(); }
+        self.tracker.watch = watch;
+    }
+    fn reset(&mut self) { self.tracker.reset(); }
 }
 
 #[cfg(test)]
@@ -239,7 +279,7 @@ mod tests {
     use Kind::*;
 
     #[derive(Default)]
-    struct Fake { procs: Vec<ProcInfo>, exits: HashMap<u32, i64>, deny: HashSet<u32>, opened: Vec<u32> }
+    struct Fake { procs: Vec<ProcInfo>, exits: HashMap<u32, i64>, deny: HashSet<u32>, opened: Vec<u32>, released: Vec<u32> }
     impl Fake {
         fn spawn(&mut self, pid: u32, ppid: Option<u32>, name: &str, cmd: &str) { self.procs.push(ProcInfo { pid, ppid, name: name.into(), cmdline: cmd.into() }); }
         fn end(&mut self, pid: u32, code: i64) { self.procs.retain(|p| p.pid != pid); self.exits.insert(pid, code); }
@@ -248,6 +288,7 @@ mod tests {
         fn list(&mut self) -> Vec<ProcInfo> { self.procs.clone() }
         fn open(&mut self, pid: u32) -> bool { if self.deny.contains(&pid) { false } else { self.opened.push(pid); true } }
         fn exit_code(&mut self, pid: u32) -> Option<i64> { self.exits.remove(&pid) }
+        fn release(&mut self, pid: u32) { self.released.push(pid); }
     }
     fn tracker() -> Tracker<Fake> { Tracker::new(Fake::default(), default_watch()) }
 
@@ -257,10 +298,14 @@ mod tests {
         assert!(!e.matches("cargo.exe.bak", ""));
         assert!(!e.matches("cargo", "cargo.exe build"));
     }
-    #[test] fn command_kind_is_substring_case_insensitive() {
+    #[test] fn command_kind_is_whole_words_case_insensitive() {
         let e = WatchEntry::new("run build", Command);
         assert!(e.matches("npm.exe", "C:\\node\\NPM RUN BUILD --prod"));
         assert!(!e.matches("run build", "npm run dev"));
+        assert!(!e.matches("x", "npm run builder"));
+        assert!(!WatchEntry::new("tsc", Command).matches("node", "node tsx --tsconfig tsconfig.json"));
+        assert!(WatchEntry::new("gradle", Command).matches("java", "C:\\gradle\\bin\\gradle.bat build"));
+        assert!(!WatchEntry::new("gradle", Command).matches("x", "gradlew build"));
         assert!(!WatchEntry::new("  ", Command).matches("x", "anything"));
     }
     #[test] fn blocked_shells_with_and_without_exe_only_for_process() {
@@ -279,7 +324,7 @@ mod tests {
         assert_eq!(watch_from_settings(&serde_json::json!({})), default_watch());
         assert_eq!(watch_from_settings(&serde_json::json!({ "watch": [] })), vec![]);
     }
-    #[test] fn defaults_are_valid_and_unique() { assert_eq!(normalize_watch(default_watch()), default_watch()); assert_eq!(default_watch().len(), 11); }
+    #[test] fn defaults_are_valid_and_unique() { assert_eq!(normalize_watch(default_watch()), default_watch()); assert_eq!(default_watch().len(), 10); }
     #[test] fn exit_code_mapping() {
         assert_eq!(exit_to_state(0), ToolState::Done);
         assert_eq!(exit_to_state(1), ToolState::NeedsYou);
@@ -305,6 +350,59 @@ mod tests {
         t.source.spawn(11, None, "cargo.exe", "cargo build");
         t.poll(); t.source.end(11, 0);
         assert_eq!(t.poll(), Some(ToolState::Done));
+    }
+    #[test] fn tsx_watch_with_tsconfig_is_not_working() {
+        let mut t = tracker();
+        t.source.spawn(30, None, "node.exe", "node tsx watch --tsconfig tsconfig.json");
+        assert_eq!(t.poll(), None);
+    }
+    #[test] fn tsc_process_counts_but_not_in_watch_mode() {
+        let mut t = tracker();
+        t.source.spawn(31, None, "tsc.exe", "tsc --watch");
+        t.source.spawn(32, None, "tsc.exe", "tsc -w -p .");
+        assert_eq!(t.poll(), None);
+        t.source.spawn(33, None, "tsc.exe", "tsc -b");
+        assert_eq!(t.poll(), Some(ToolState::Working));
+    }
+    #[test] fn gradle_daemon_is_not_working() {
+        let mut t = tracker();
+        t.source.spawn(40, None, "java.exe", "java -cp C:\\gradle\\lib\\gradle-launcher.jar org.gradle.launcher.daemon.bootstrap.GradleDaemon 8.10");
+        assert_eq!(t.poll(), None);
+        t.source.spawn(41, None, "java.exe", "java -cp gradle-wrapper.jar org.gradle.wrapper.GradleWrapperMain build");
+        assert_eq!(t.poll(), Some(ToolState::Working));
+    }
+    #[test] fn failure_reports_needs_you_while_another_still_runs() {
+        let mut t = tracker();
+        t.source.spawn(1, None, "a", "cargo build");
+        t.source.spawn(2, None, "b", "dotnet build");
+        t.poll();
+        t.source.end(1, 101);
+        assert_eq!(t.poll(), Some(ToolState::NeedsYou));
+        assert_eq!(t.poll(), Some(ToolState::Working));
+        t.source.end(2, 0);
+        assert_eq!(t.poll(), Some(ToolState::Done));
+    }
+    #[test] fn disabling_or_changing_watch_drops_tracked_with_no_stale_report() {
+        let mut a = BuildAdapter { tracker: Tracker::new(Fake::default(), default_watch()), last: Instant::now() };
+        a.tracker.source.spawn(1, None, "cargo", "cargo build");
+        assert_eq!(a.poll(), Some(ToolState::Working));
+        a.configure(&serde_json::json!({ "adapters": { "build": false } }));
+        assert_eq!(a.tracker.source.released, vec![1]);
+        a.tracker.source.end(1, 101);
+        assert_eq!(a.poll(), None, "no stale NeedsYou after turning off");
+        // watch-list change
+        a.configure(&serde_json::json!({}));
+        a.tracker.source.spawn(2, None, "cargo", "cargo build");
+        assert_eq!(a.poll(), Some(ToolState::Working));
+        a.configure(&serde_json::json!({ "watch": [{ "match": "make", "kind": "command" }] }));
+        assert_eq!(a.tracker.source.released, vec![1, 2]);
+        a.tracker.source.end(2, 0);
+        assert_eq!(a.poll(), None, "no stale Done after a list change");
+        // unchanged settings keep tracking
+        a.tracker.source.spawn(3, None, "make", "make all");
+        a.poll();
+        a.configure(&serde_json::json!({ "watch": [{ "match": "make", "kind": "command" }] }));
+        assert_eq!(a.tracker.source.released, vec![1, 2]);
     }
     #[test] fn unwatched_processes_do_nothing() {
         let mut t = tracker();

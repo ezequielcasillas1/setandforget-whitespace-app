@@ -2,11 +2,13 @@
 export type WatchKind = 'process' | 'command'
 export type WatchEntry = { match: string; kind: WatchKind }
 
-// Kinds aren't given in the card (S2.5 TBD 1): `.exe` entries are process, the rest command.
+// Card §15.3: `.exe` entries are process (`msbuild.exe`, `tsc.exe`), the rest whole-word commands.
+// Matching itself happens in Rust (adapters/build.rs).
 export const DEFAULT_WATCH: WatchEntry[] = [
-  ...['cargo build', 'cargo run', 'npm run build', 'pnpm build', 'yarn build', 'gradle', 'gradlew', 'dotnet build'].map((m) => ({ match: m, kind: 'command' as const })),
+  ...['cargo build', 'cargo run', 'npm run build', 'pnpm build', 'yarn build', 'gradle', 'dotnet build'].map((m) => ({ match: m, kind: 'command' as const })),
   { match: 'msbuild.exe', kind: 'process' },
-  ...['tsc', 'vite build'].map((m) => ({ match: m, kind: 'command' as const })),
+  { match: 'tsc.exe', kind: 'process' },
+  { match: 'vite build', kind: 'command' },
 ]
 
 /** S2.5 TBD 2: the Add picker defaults to Command. */

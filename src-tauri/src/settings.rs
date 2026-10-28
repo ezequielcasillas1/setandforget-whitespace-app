@@ -46,7 +46,7 @@ mod tests {
         let _ = std::fs::remove_file(&p);
         assert_eq!(v["adapters"]["build"], json!(true));
         assert_eq!(v["watch"], json!([{ "match": "make", "kind": "command" }]));
-        assert_eq!(defaults()["watch"].as_array().unwrap().len(), 11);
+        assert_eq!(defaults()["watch"].as_array().unwrap().len(), 10);
     }
     #[test] fn shortcut_mapping() { assert_eq!(to_shortcut("Ctrl+Alt+Shift+Esc"), "Control+Alt+Shift+Escape"); }
     #[test] fn load_merges_defaults() {

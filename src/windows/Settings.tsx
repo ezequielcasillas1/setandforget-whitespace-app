@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { PATTERNS } from '../breathing/patterns'
-import { DEFAULT_SETTINGS, loadSettings, saveSettings, type Settings } from '../settings'
+import { DEFAULT_SETTINGS, loadSettings, normalize, saveSettings, type Settings } from '../settings'
 import { invoke, isTauri } from '../tauri'
 import { validateHotkey } from '../hotkey'
 import { DEFAULT_ADD_KIND, DEFAULT_WATCH, addEntry, sameAsDefaults, type WatchKind } from '../watch'
@@ -30,12 +30,15 @@ export default function SettingsWindow() {
   }
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => setS((p) => ({ ...p, [k]: v }))
   const save = async () => {
-    const warning = await saveSettings(s)
+    // Clamp the verse interval before saving: min ≥ 5 s, max ≥ min (Kit bug 2).
+    const clamped = normalize(s)
+    setS(clamped)
+    const warning = await saveSettings(clamped)
     setMsg(warning ?? 'Saved.')
   }
   return (
     <div className="settings">
-      <h1>AI Overlay settings</h1>
+      <h1>Whitespace settings</h1>
 
       <h2>Exercise</h2>
       {PATTERNS.map((p) => (
