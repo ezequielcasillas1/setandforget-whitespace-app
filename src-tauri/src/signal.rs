@@ -10,6 +10,19 @@ pub fn signals_dir() -> PathBuf {
 
 pub fn is_known_tool(t: &str) -> bool { matches!(t, "claude" | "codex" | "copilot" | "cursor" | "windsurf") }
 
+/// Cursor `preToolUse` covers every executable action. Map the tool name to a gate the whiteout can
+/// back out on (Run, Accept, Start, Allow). Reads and searches stay ordinary work.
+pub fn cursor_tool_gate(tool_name: &str) -> String {
+    let kind = match tool_name {
+        "Shell" => "run",
+        "Write" | "Delete" | "EditNotebook" | "StrReplace" | "ApplyPatch" => "accept",
+        "Task" => "start",
+        n if n.starts_with("MCP:") => "allow",
+        _ => return "preToolUse".into(),
+    };
+    format!("preToolUse:{kind}")
+}
+
 /// Builds the one JSON line for a hook call. `stdin` may be empty or not JSON.
 pub fn line(tool: &str, event: &str, stdin: &str, t_ms: u128) -> String {
     let v: serde_json::Value = serde_json::from_str(stdin.trim()).unwrap_or(serde_json::Value::Null);
@@ -17,6 +30,10 @@ pub fn line(tool: &str, event: &str, stdin: &str, t_ms: u128) -> String {
         .find_map(|k| v.get(*k).and_then(|x| x.as_str()).map(str::to_string)).unwrap_or_default();
     let mut ev = event.to_string();
     if tool == "cursor" && event == "stop" && v.get("status").and_then(|s| s.as_str()) == Some("error") { ev = "stop:error".into(); }
+    // Tool name only. Never the command, path, or prompt — those stay out of the signal file.
+    if tool == "cursor" && event == "preToolUse" {
+        ev = cursor_tool_gate(v.get("tool_name").and_then(|x| x.as_str()).unwrap_or(""));
+    }
     serde_json::json!({ "t": t_ms as u64, "tool": tool, "event": ev, "session": session }).to_string()
 }
 

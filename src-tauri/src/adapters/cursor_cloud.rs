@@ -1,4 +1,4 @@
-//! Cursor cloud agents (card 03c). Polls Cursor's Cloud Agents API about every 15 s on its own thread
+//! Cursor cloud agents (card 03c). Polls Cursor's Cloud Agents API about every 2 s on its own thread
 //! and reports Working while any agent is ACTIVE. Errors never white out. The key lives only in the
 //! Windows Credential Manager; it is never logged, written to settings, or sent to the frontend.
 use super::{Adapter, ToolState};
@@ -30,7 +30,9 @@ pub fn classify(code: u16, body: &str) -> Outcome {
     match code {
         200..=299 => {
             let v: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
-            let any = v["agents"].as_array().map_or(false, |a| a.iter().any(|x| x["status"] == "ACTIVE"));
+            // v1 lists agents under "items"; v0 used "agents".
+            let list = v.get("items").and_then(|x| x.as_array()).or_else(|| v.get("agents").and_then(|x| x.as_array()));
+            let any = list.map_or(false, |a| a.iter().any(|x| busy_status(x["status"].as_str().unwrap_or(""))));
             if any { Outcome::Active } else { Outcome::Idle }
         }
         401 | 403 => Outcome::Rejected,
@@ -47,9 +49,14 @@ pub fn fetch(base: &str, key: &str) -> Outcome {
     }
 }
 
-/// Seconds to wait before the next check: 15 normally, doubling to 60 on errors.
+/// List/run statuses that mean a task is being created or implemented, not only the word ACTIVE.
+pub fn busy_status(status: &str) -> bool {
+    matches!(status, "ACTIVE" | "RUNNING" | "CREATING" | "WAITING_FOR_BACKGROUND_WORK")
+}
+
+/// Seconds to wait before the next check: 2 normally, doubling to 60 on errors.
 pub fn next_delay(o: Outcome, prev: u64) -> u64 {
-    match o { Outcome::Active | Outcome::Idle => 15, _ => (prev.max(15) * 2).min(60) }
+    match o { Outcome::Active | Outcome::Idle => 2, _ => (prev.max(2) * 2).min(60) }
 }
 
 // ---- key storage ----
@@ -97,7 +104,7 @@ impl CursorCloudAdapter {
         let h: Handle = Arc::new(Mutex::new(Shared { has_key: store::get().is_some(), ..Default::default() }));
         let th = h.clone();
         std::thread::spawn(move || {
-            let mut delay = 15u64;
+            let mut delay = 2u64;
             let mut next = Instant::now();
             loop {
                 std::thread::sleep(Duration::from_millis(500));
@@ -158,6 +165,9 @@ mod tests {
     #[test] fn classify_cases() {
         assert_eq!(classify(200, r#"{"agents":[{"status":"FINISHED"},{"status":"ACTIVE"}]}"#), Outcome::Active);
         assert_eq!(classify(200, r#"{"agents":[{"status":"FINISHED"}]}"#), Outcome::Idle);
+        assert_eq!(classify(200, r#"{"items":[{"status":"CREATING"}]}"#), Outcome::Active);
+        assert_eq!(classify(200, r#"{"items":[{"status":"RUNNING"}]}"#), Outcome::Active);
+        assert_eq!(classify(200, r#"{"items":[{"status":"IDLE"}]}"#), Outcome::Idle);
         assert_eq!(classify(200, "garbage"), Outcome::Idle);
         assert_eq!(classify(401, ""), Outcome::Rejected);
         assert_eq!(classify(429, ""), Outcome::RateLimited);
@@ -194,9 +204,11 @@ mod tests {
         assert_eq!(status_code(true, true, Some(Outcome::Active)), "working");
         assert_eq!(status_code(true, true, Some(Outcome::Rejected)), "rejected");
         assert_eq!(status_code(true, true, Some(Outcome::Unreachable)), "unreachable");
-        assert_eq!(next_delay(Outcome::Unreachable, 15), 30);
+        assert_eq!(busy_status("ACTIVE") && busy_status("RUNNING") && busy_status("CREATING"), true);
+        assert!(!busy_status("IDLE") && !busy_status("FINISHED"));
+        assert_eq!(next_delay(Outcome::Unreachable, 2), 4);
         assert_eq!(next_delay(Outcome::RateLimited, 60), 60);
-        assert_eq!(next_delay(Outcome::Idle, 60), 15);
+        assert_eq!(next_delay(Outcome::Idle, 60), 2);
     }
     #[test] fn key_roundtrip_and_status_never_contains_it() {
         let h: Handle = Arc::new(Mutex::new(Shared { enabled: true, ..Default::default() }));

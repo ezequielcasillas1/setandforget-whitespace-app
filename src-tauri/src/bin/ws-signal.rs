@@ -6,6 +6,7 @@ mod signal;
 use std::io::{Read, Write};
 use std::time::Duration;
 
+// Long enough for a tool that closes stdin, short enough that a pipe left open still records and exits.
 const STDIN_WAIT: Duration = Duration::from_millis(1000);
 
 fn read_stdin_bounded() -> String {
@@ -18,10 +19,12 @@ fn read_stdin_bounded() -> String {
     rx.recv_timeout(STDIN_WAIT).unwrap_or_default()
 }
 
-/// Reply the tool expects. Cursor's beforeSubmitPrompt wants an explicit continue.
+/// Reply the tool expects. Permission hooks must be valid or Cursor blocks the action.
+/// `allow` does not hide Cursor's own Ask button (ask still wins); it only stops us forcing a block.
 fn reply(tool: &str, event: &str) -> &'static str {
     match (tool, event) {
         ("cursor", "beforeSubmitPrompt") => "{\"continue\":true}",
+        ("cursor", "beforeShellExecution" | "beforeMCPExecution" | "beforeReadFile" | "preToolUse" | "subagentStart") => "{\"permission\":\"allow\"}",
         _ => "{}",
     }
 }
@@ -46,6 +49,9 @@ mod tests {
     use super::*;
     #[test] fn cursor_prompt_gets_continue() {
         assert_eq!(reply("cursor", "beforeSubmitPrompt"), "{\"continue\":true}");
+        assert_eq!(reply("cursor", "beforeShellExecution"), "{\"permission\":\"allow\"}");
+        assert_eq!(reply("cursor", "preToolUse"), "{\"permission\":\"allow\"}");
+        assert_eq!(reply("cursor", "subagentStart"), "{\"permission\":\"allow\"}");
         assert_eq!(reply("cursor", "stop"), "{}");
         assert_eq!(reply("claude", "UserPromptSubmit"), "{}");
     }

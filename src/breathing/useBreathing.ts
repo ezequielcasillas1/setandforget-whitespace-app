@@ -8,11 +8,11 @@ export function useBreathing(pattern: BreathPattern, durationMinutes: number) {
   const stateRef = useRef(state)
   const breathRef = useRef(0)
   const patternRef = useRef(pattern)
-  const durationRef = useRef(durationMinutes * 60)
+  const durationRef = useRef(durationMinutes > 0 ? durationMinutes * 60 : Number.POSITIVE_INFINITY)
   const onPhaseChangeRef = useRef<((e: PhaseEvent) => void) | null>(null)
 
   useEffect(() => { patternRef.current = pattern }, [pattern])
-  useEffect(() => { durationRef.current = durationMinutes * 60 }, [durationMinutes])
+  useEffect(() => { durationRef.current = durationMinutes > 0 ? durationMinutes * 60 : Number.POSITIVE_INFINITY }, [durationMinutes])
 
   const reset = useCallback(() => {
     stateRef.current = { ...initialState }

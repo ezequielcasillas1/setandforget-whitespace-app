@@ -3,7 +3,7 @@ Status: draft, preview build only. No publishing, signing or spending. Cheke tes
 Sources: spec `docs/specs/01-mvp.md` (Spec), card `docs/architecture/01-mvp-card.md` (Card), AER Breathe at `/workspace/apps/aer-breathe/app/src` (AER). Nothing here goes beyond those three.
 
 ## 1. Screen list
-1. **Tray menu** (Card §2): Settings, Pause adapters, Show whiteout now (test), Quit. It is the only entry point at rest. No main window.
+1. **Tray menu** (Card §2): Settings, Pause adapters, WhiteSpace me, Quit. It is the only entry point at rest. No main window.
 2. **Whiteout** (Spec; Card §2): full-screen, always on top, opaque plain white. It blocks all typing and clicks. It is transparent only for the fade in and out. Contents: breathing circle, verse, version label, exit button. No triggering tool is shown (decided, §6).
 3. **Settings window** (Spec; Card §2, §8): normal window opened from the tray. Fields: exercise, verse timing, per-app on/off (Cursor), opt-in accessibility fallback, dust theme (off by default), reduced motion (system / on / off), monitors (all / active), panic hotkey, chime volume and mute (rows below). The 20-minute cap and the 90 s quiet timeout are fixed and don't appear in settings (Card §8).
    - **Panic hotkey row:** shows Ctrl+Alt+Shift+Esc by default and can be edited. Combos Windows reserves, or that the hook can't see (anything with Ctrl+Alt+Del or Win+L), are rejected (Card §3).
@@ -34,7 +34,7 @@ Sources: spec `docs/specs/01-mvp.md` (Spec), card `docs/architecture/01-mvp-card
 
    On exit, focus goes back to the dev tool.
 
-**Settings flow:** tray, then Settings, then change a field. Settings are saved locally (`settings.json`). "Show whiteout now (test)" in the tray previews the result.
+**Settings flow:** tray, then Settings, then change a field. Settings are saved locally (`settings.json`). "WhiteSpace me" in the tray previews the result.
 
 ## 3. Layout rules
 - **Exit button:** always visible on the whiteout and always clickable. The sources give no placement or size. Proposed rule: match AER's minimum tap target of 44px height (`.text-button`, `.duration-options`). Placement is TBD (Cheke / Jacqueline).

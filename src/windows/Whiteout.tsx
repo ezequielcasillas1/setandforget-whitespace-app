@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useBreathing } from '../breathing/useBreathing'
 import { findPattern } from '../breathing/patterns'
 import { playChime } from '../chime'
+import { isPracticeShow } from '../practice/intention'
 import { DEFAULT_SETTINGS, loadSettings, prefersReducedMotion, type Settings } from '../settings'
 import { invoke, isTauri, listen } from '../tauri'
 import DustField from '../theme/DustField'
@@ -11,15 +12,16 @@ import { FALLBACK_VERSE, versionLabel } from '../verses/client'
 /** 20-minute cap (spec). Rust enforces it too; this keeps the engine bounded. */
 const CAP_MINUTES = 20
 
-type ShowPayload = { seed: number }
+type ShowPayload = { seed: number; practice?: boolean }
 type ClearPayload = { reason: string; chime: boolean; instant?: boolean }
 
 export default function Whiteout() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS)
   const [visible, setVisible] = useState(false)
+  const [held, setHeld] = useState(() => !isTauri())
   const [seed, setSeed] = useState(() => Date.now() & 0xffffffff)
   const pattern = findPattern(settings.exercise)
-  const { state, breathRef, start, reset, setOnPhaseChange } = useBreathing(pattern, CAP_MINUTES)
+  const { state, breathRef, start, reset, setOnPhaseChange } = useBreathing(pattern, held ? 0 : CAP_MINUTES)
   const stateRef = useRef(state)
   stateRef.current = state
   const [minSec, maxSec] = settings.verseIntervalSec
@@ -40,9 +42,14 @@ export default function Whiteout() {
 
   setOnPhaseChange((e) => verses.onPhase(e, stateRef.current.elapsed))
 
-  const begin = useCallback(async (s: number) => {
-    setSettings(await loadSettings())
+  const generation = useRef(0)
+  const begin = useCallback(async (s: number, nextHeld = false) => {
+    const mine = ++generation.current
+    const next = await loadSettings()
+    if (mine !== generation.current) return
+    setSettings(next)
     setSeed(s)
+    setHeld(!isTauri() || nextHeld)
     setVisible(true)
   }, [])
 
@@ -78,7 +85,7 @@ export default function Whiteout() {
   const endRef = useRef(end); endRef.current = end
   useEffect(() => {
     const subs = [
-      listen<ShowPayload>('whiteout:show', (p) => void beginRef.current(p.seed)),
+      listen<ShowPayload>('whiteout:show', (p) => void beginRef.current(p.seed, isPracticeShow(p))),
       listen<ClearPayload>('whiteout:clear', (p) => void endRef.current(p.chime, !!p.instant)),
     ]
     return () => { subs.forEach((s) => s.then((u) => u())) }
@@ -87,7 +94,7 @@ export default function Whiteout() {
   useEffect(() => {
     if (isTauri() || previewed.current) return
     previewed.current = true
-    void beginRef.current(Date.now() & 0xffffffff) // browser preview: show straight away, once
+    void beginRef.current(Date.now() & 0xffffffff, true)
   }, [])
 
   // Circle scaling from breathRef each frame (static when reduced motion is on).
@@ -104,7 +111,7 @@ export default function Whiteout() {
 
   const exit = () => {
     if (isTauri()) void invoke('request_clear', { reason: 'exit-button' })
-    else void end(false).then(() => begin(Date.now() & 0xffffffff))
+    else void end(false).then(() => begin(Date.now() & 0xffffffff, true))
   }
 
   // Desktop circle size (TBD in UX packet): max diameter = 36% of min(width, height), AER's centered min(w,h) rule.

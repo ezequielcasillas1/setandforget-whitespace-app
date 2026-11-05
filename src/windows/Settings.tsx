@@ -4,6 +4,7 @@ import { DEFAULT_SETTINGS, loadSettings, normalize, saveSettings, type Settings 
 import { invoke, isTauri, listen } from '../tauri'
 import { validateHotkey, validateQuitHotkey } from '../hotkey'
 import { DEFAULT_ADD_KIND, DEFAULT_WATCH, addEntry, sameAsDefaults, type WatchKind } from '../watch'
+import { PRACTICE_INTENTION, PRACTICE_LABEL } from '../practice/intention'
 
 type HookStatus = { id: string; found: boolean; installed: boolean; trustPending: boolean }
 // Card 03 build order. Notes are the UX packet's proposed wording (slice 03b, B1).
@@ -238,10 +239,11 @@ export default function SettingsWindow() {
       <div className="actions">
         {isTauri() && <button onClick={() => void invoke('quit_app').catch(() => setMsg("Couldn't quit. Right-click the tray icon and pick Quit."))}>Quit Whitespace</button>}
         <button className="primary" onClick={save}>Save</button>
-        {isTauri() && <button onClick={() => void invoke('show_whiteout_test')}>Show whiteout now (test)</button>}
-        {!isTauri() && <button onClick={() => { location.hash = 'whiteout-preview'; location.reload() }}>Preview whiteout</button>}
+        {isTauri() && <button onClick={() => void invoke('show_whiteout_test')}>{PRACTICE_LABEL}</button>}
+        {!isTauri() && <button onClick={() => { location.hash = 'whiteout-preview'; location.reload() }}>{PRACTICE_LABEL}</button>}
       </div>
       {isTauri() && <p className="helper">Quit closes Whitespace completely (or press {s.quitHotkey}). Unsaved changes aren't kept.</p>}
+      <p className="hint">{PRACTICE_INTENTION}</p>
     </div>
   )
 }

@@ -11,7 +11,7 @@ Scope: preview build on Windows 11 and 10. No code, installs, commits, publishin
 
 ## 2. Process and windows model
 One Tauri process, no visible main window.
-- **Tray icon** (Tauri 2 `tray` API). Menu: Settings, Pause adapters, Show whiteout now (test), Quit. It is the only entry point at rest.
+- **Tray icon** (Tauri 2 `tray` API). Menu: Settings, Pause adapters, WhiteSpace me, Quit. It is the only entry point at rest.
 - **Rust core** (main process) owns the adapter registry, the state machine, the input hook thread, timers (3 s show delay, 20 min cap, 90 s adapter-quiet auto-clear), settings and the verse cache.
 - **Whiteout window(s)** (`label: whiteout-<monitor>`): `decorations:false`, `transparent:true`, `alwaysOnTop:true`, `skipTaskbar:true`, `fullscreen` sized to the monitor bounds, created hidden at startup and shown or hidden instead of recreated, so they appear within the 3 s target. The spec says "one overlay at a time" and gives a monitor setting: **all monitors** means one window per monitor, all driven by the same single session (one breathing clock, one verse); **active monitor** means one window on the monitor with the foreground window. The window renders opaque white (the spec calls it "plain white" and a "complete" whiteout). It is transparent only so the fade in and fade out can happen.
 - **Settings window** (`label: settings`): normal decorated window, opened from the tray.

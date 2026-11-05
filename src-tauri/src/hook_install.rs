@@ -27,7 +27,7 @@ fn events(tool: &str) -> &'static [&'static str] {
         "claude" => &["UserPromptSubmit", "PermissionRequest", "Notification", "Stop", "StopFailure", "SessionEnd"],
         "codex" => &["UserPromptSubmit", "PermissionRequest", "Stop", "Interrupt", "SessionEnd"],
         "copilot" => &["userPromptSubmitted", "notification", "errorOccurred", "agentStop", "sessionEnd"],
-        "cursor" => &["beforeSubmitPrompt", "stop", "sessionEnd"],
+        "cursor" => &["beforeSubmitPrompt", "beforeShellExecution", "afterShellExecution", "beforeMCPExecution", "afterMCPExecution", "preToolUse", "postToolUse", "subagentStart", "subagentStop", "afterFileEdit", "stop", "sessionEnd"],
         "windsurf" => &["pre_user_prompt", "post_cascade_response"],
         _ => &[],
     }

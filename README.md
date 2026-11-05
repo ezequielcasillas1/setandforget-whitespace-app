@@ -7,7 +7,7 @@ Tauri 2 (Rust) + React 19 / TypeScript 5.9 / Vite 7. Built from docs/specs/01-mv
     npm test                                  # frontend unit tests (vitest)
     cargo test --manifest-path src-tauri/Cargo.toml   # Rust unit tests
     npm run dev          # browser preview of the whiteout at http://localhost:1420 (#settings for Settings)
-    npm run tauri:dev    # desktop app (tray icon → Settings / Show whiteout now (test))
+    npm run tauri:dev    # desktop app (tray icon → Settings / WhiteSpace me)
     npm run tauri:build  # unsigned local binary, no installer: src-tauri/target/release/ai-overlay
 
 Verses come only from the local KBS verse API. Point dev builds at it with

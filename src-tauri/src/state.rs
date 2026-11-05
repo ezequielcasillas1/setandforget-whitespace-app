@@ -1,9 +1,11 @@
-//! Whiteout state machine (card §2): idle → working → (3 s) → shown → {needs-you | done | panic | exit | cap | quiet} → cleared.
+//! Whiteout state machine (card §2): idle → working → (1 s) → shown → {needs-you | done | panic | exit | cap | quiet} → cleared.
 //! Pure and clock-free (times are ms since an arbitrary origin) so it is unit-testable.
 
 use crate::adapters::ToolState;
 
-pub const SHOW_DELAY_MS: u64 = 3_000;
+/// Short on purpose: a new implement/develop task should cover the screen quickly.
+/// Sub-second blips still never show. The old 3 s wait is what made tasks feel late.
+pub const SHOW_DELAY_MS: u64 = 1_000;
 pub const CAP_MS: u64 = 20 * 60 * 1_000;
 pub const QUIET_MS: u64 = 90 * 1_000;
 
@@ -31,13 +33,14 @@ pub enum Phase { Idle, Pending { since: u64 }, Shown { since: u64 } }
 pub enum Action { None, Show, Clear(ClearReason) }
 
 #[derive(Debug, Clone)]
-pub struct Machine { pub phase: Phase, last_signal: u64 }
+pub struct Machine { pub phase: Phase, last_signal: u64, held: bool }
 
-impl Default for Machine { fn default() -> Self { Self { phase: Phase::Idle, last_signal: 0 } } }
+impl Default for Machine { fn default() -> Self { Self { phase: Phase::Idle, last_signal: 0, held: false } } }
 
 impl Machine {
     /// A state report from an adapter.
     pub fn on_tool(&mut self, s: ToolState, now: u64) -> Action {
+        if self.held { return Action::None; }
         self.last_signal = now;
         match (s, self.phase) {
             (ToolState::Working, Phase::Idle) => { self.phase = Phase::Pending { since: now }; Action::None }
@@ -53,6 +56,7 @@ impl Machine {
     pub fn on_signal(&mut self, now: u64) { self.last_signal = now; }
 
     pub fn tick(&mut self, now: u64) -> Action {
+        if self.held { return Action::None; }
         match self.phase {
             Phase::Pending { since } if now.saturating_sub(since) >= SHOW_DELAY_MS => {
                 self.phase = Phase::Shown { since: now };
@@ -64,13 +68,23 @@ impl Machine {
             _ => Action::None,
         }
     }
-    /// Tray "Show whiteout now (test)": skips the delay. Cap and quiet timers still apply.
+    /// Immediate show for a program session. Quiet and cap still apply.
     pub fn show_now(&mut self, now: u64) -> Action {
         if matches!(self.phase, Phase::Shown { .. }) { return Action::None; }
+        self.held = false;
         self.last_signal = now;
         self.phase = Phase::Shown { since: now };
         Action::Show
     }
+    /// Preview: verses and breathing stay up until Exit or hotkey. No quiet, cap, or adapter clear.
+    pub fn show_preview(&mut self, now: u64) -> Action {
+        if matches!(self.phase, Phase::Shown { .. }) { return Action::None; }
+        self.held = true;
+        self.last_signal = now;
+        self.phase = Phase::Shown { since: now };
+        Action::Show
+    }
+    pub fn is_held(&self) -> bool { self.held }
     pub fn panic(&mut self) -> Action { self.user_clear(ClearReason::Panic) }
     pub fn exit_button(&mut self) -> Action { self.user_clear(ClearReason::ExitButton) }
     pub fn disable(&mut self) -> Action { self.user_clear(ClearReason::Disabled) }
@@ -78,12 +92,14 @@ impl Machine {
     fn user_clear(&mut self, r: ClearReason) -> Action {
         match self.phase {
             Phase::Shown { .. } => self.clear(r),
-            Phase::Pending { .. } => { self.phase = Phase::Idle; Action::None }
+            Phase::Pending { .. } => { self.held = false; self.phase = Phase::Idle; Action::None }
             Phase::Idle => Action::None,
         }
     }
-    fn clear(&mut self, r: ClearReason) -> Action { self.phase = Phase::Idle; Action::Clear(r) }
+    fn clear(&mut self, r: ClearReason) -> Action { self.held = false; self.phase = Phase::Idle; Action::Clear(r) }
     pub fn is_shown(&self) -> bool { matches!(self.phase, Phase::Shown { .. }) }
+    /// Pending or already up: a waiting Execute button should cancel or clear the cover.
+    pub fn covers_or_will(&self) -> bool { matches!(self.phase, Phase::Pending { .. } | Phase::Shown { .. }) }
 }
 
 
@@ -99,6 +115,7 @@ pub struct Aggregator {
 impl Aggregator {
     /// One adapter's report for this poll.
     pub fn report(&mut self, m: &mut Machine, id: &'static str, s: ToolState, now: u64) -> Action {
+        if m.is_held() { return Action::None; }
         let prev = self.last.insert(id, s);
         match s {
             ToolState::Working => {
@@ -113,8 +130,13 @@ impl Aggregator {
             }
         }
     }
+    /// User dismissed the whiteout. Ongoing work must not show it again.
+    /// A later Working edge (a tool that was not already working) may arm it.
+    pub fn hold(&mut self) { self.latched = true; }
+
     /// Adapter disabled or not reporting: forget it so it can't hold the overlay up.
     pub fn forget(&mut self, m: &mut Machine, id: &'static str, now: u64) -> Action {
+        if m.is_held() { return Action::None; }
         if self.last.remove(id) == Some(ToolState::Working) && !self.any_working() && !self.latched { return m.on_tool(ToolState::Done, now); }
         Action::None
     }
@@ -129,12 +151,12 @@ mod tests {
     fn working_then_shown() -> Machine {
         let mut m = Machine::default();
         assert_eq!(m.on_tool(Working, 0), Action::None);
-        assert_eq!(m.tick(2_999), Action::None);
-        assert_eq!(m.tick(3_000), Action::Show);
+        assert_eq!(m.tick(SHOW_DELAY_MS - 1), Action::None);
+        assert_eq!(m.tick(SHOW_DELAY_MS), Action::Show);
         m
     }
 
-    #[test] fn shows_after_3s_of_working() { assert!(working_then_shown().is_shown()); }
+    #[test] fn shows_after_the_short_delay() { assert!(working_then_shown().is_shown()); }
 
     #[test] fn needs_you_and_done_clear_immediately_with_chime() {
         let mut m = working_then_shown();
@@ -148,16 +170,17 @@ mod tests {
     #[test] fn short_runs_never_show() {
         let mut m = Machine::default();
         m.on_tool(Working, 0);
-        assert_eq!(m.on_tool(Done, 1_500), Action::None);
+        assert_eq!(m.on_tool(Done, SHOW_DELAY_MS / 2), Action::None);
         assert_eq!(m.tick(10_000), Action::None);
         assert_eq!(m.phase, Phase::Idle);
     }
 
     #[test] fn cap_at_20_minutes() {
         let mut m = working_then_shown();
-        let mut t = 3_000;
-        while t < 3_000 + CAP_MS - 1 { t += 30_000; m.on_signal(t); if t < 3_000 + CAP_MS { assert_eq!(m.tick(t.min(3_000 + CAP_MS - 1)), Action::None); } }
-        assert_eq!(m.tick(3_000 + CAP_MS), Action::Clear(ClearReason::Cap));
+        let start = SHOW_DELAY_MS;
+        let mut t = start;
+        while t < start + CAP_MS - 1 { t += 30_000; m.on_signal(t); if t < start + CAP_MS { assert_eq!(m.tick(t.min(start + CAP_MS - 1)), Action::None); } }
+        assert_eq!(m.tick(start + CAP_MS), Action::Clear(ClearReason::Cap));
         assert!(!ClearReason::Cap.chime());
     }
 
@@ -166,6 +189,22 @@ mod tests {
         m.on_signal(10_000);
         assert_eq!(m.tick(10_000 + QUIET_MS - 1), Action::None);
         assert_eq!(m.tick(10_000 + QUIET_MS), Action::Clear(ClearReason::AdapterQuiet));
+    }
+
+    #[test] fn panic_hold_blocks_the_same_work_from_coming_back() {
+        let (mut m, mut g) = (Machine::default(), Aggregator::default());
+        g.report(&mut m, "cursor", Working, 0);
+        assert_eq!(m.tick(SHOW_DELAY_MS), Action::Show);
+        g.hold();
+        assert_eq!(m.panic(), Action::Clear(ClearReason::Panic));
+        for t in [3_500, 6_000, 20_000] {
+            assert_eq!(g.report(&mut m, "cursor", Working, t), Action::None);
+            assert_eq!(m.tick(t), Action::None);
+        }
+        assert!(!m.is_shown());
+        assert_eq!(g.report(&mut m, "cursor", Done, 21_000), Action::None);
+        g.report(&mut m, "cursor", Working, 22_000);
+        assert_eq!(m.tick(25_000), Action::Show);
     }
 
     #[test] fn panic_and_exit_clear_without_chime() {
@@ -184,16 +223,37 @@ mod tests {
         assert_eq!(m.tick(QUIET_MS), Action::Clear(ClearReason::AdapterQuiet));
     }
 
+    #[test] fn preview_stays_past_quiet_cap_and_adapter_done() {
+        let mut m = Machine::default();
+        assert_eq!(m.show_preview(0), Action::Show);
+        assert!(m.is_held());
+        assert_eq!(m.tick(QUIET_MS), Action::None);
+        assert_eq!(m.tick(CAP_MS), Action::None);
+        assert_eq!(m.on_tool(Done, CAP_MS + 1), Action::None);
+        assert_eq!(m.on_tool(NeedsYou, CAP_MS + 2), Action::None);
+        assert!(m.is_shown());
+        assert_eq!(m.exit_button(), Action::Clear(ClearReason::ExitButton));
+        assert!(!m.is_held());
+    }
+
+    #[test] fn preview_ignores_adapter_reports() {
+        let (mut m, mut g) = (Machine::default(), Aggregator::default());
+        assert_eq!(m.show_preview(0), Action::Show);
+        assert_eq!(g.report(&mut m, "cursor", Working, 1), Action::None);
+        assert_eq!(g.report(&mut m, "cursor", Done, 2), Action::None);
+        assert!(m.is_shown() && m.is_held());
+    }
+
     #[test] fn two_tools_one_arm_timer() {
         let (mut m, mut g) = (Machine::default(), Aggregator::default());
         g.report(&mut m, "cursor", Working, 0);
-        g.report(&mut m, "build", Working, 2_000);
-        assert_eq!(m.tick(3_000), Action::Show);
+        g.report(&mut m, "build", Working, SHOW_DELAY_MS / 2);
+        assert_eq!(m.tick(SHOW_DELAY_MS), Action::Show);
     }
     #[test] fn clears_only_when_all_idle_or_done() {
         let (mut m, mut g) = (Machine::default(), Aggregator::default());
         g.report(&mut m, "cursor", Working, 0); g.report(&mut m, "build", Working, 0);
-        m.tick(3_000);
+        m.tick(SHOW_DELAY_MS);
         assert_eq!(g.report(&mut m, "cursor", Done, 4_000), Action::None);
         assert!(m.is_shown());
         assert_eq!(g.report(&mut m, "build", Done, 5_000), Action::Clear(ClearReason::Done));
@@ -201,7 +261,7 @@ mod tests {
     #[test] fn needs_you_wins_instantly_and_latches_until_new_edge() {
         let (mut m, mut g) = (Machine::default(), Aggregator::default());
         g.report(&mut m, "cursor", Working, 0); g.report(&mut m, "build", Working, 0);
-        m.tick(3_000);
+        m.tick(SHOW_DELAY_MS);
         assert_eq!(g.report(&mut m, "build", NeedsYou, 4_000), Action::Clear(ClearReason::NeedsYou));
         assert!(ClearReason::NeedsYou.instant() && !ClearReason::Done.instant());
         // cursor keeps reporting Working: no re-arm
@@ -214,12 +274,12 @@ mod tests {
     #[test] fn ongoing_build_keeps_quiet_timer_fed() {
         let (mut m, mut g) = (Machine::default(), Aggregator::default());
         let mut t = 0;
-        while t < 200_000 { g.report(&mut m, "build", Working, t); if t == 3_000 { assert_eq!(m.tick(t), Action::Show); } else { assert_eq!(m.tick(t), Action::None); } t += 500; }
+        while t < 200_000 { g.report(&mut m, "build", Working, t); if t == SHOW_DELAY_MS { assert_eq!(m.tick(t), Action::Show); } else { assert_eq!(m.tick(t), Action::None); } t += 500; }
         assert!(m.is_shown());
     }
     #[test] fn forgetting_a_disabled_working_tool_clears() {
         let (mut m, mut g) = (Machine::default(), Aggregator::default());
-        g.report(&mut m, "build", Working, 0); m.tick(3_000);
+        g.report(&mut m, "build", Working, 0); m.tick(SHOW_DELAY_MS);
         assert_eq!(g.forget(&mut m, "build", 4_000), Action::Clear(ClearReason::Done));
     }
 }

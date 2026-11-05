@@ -86,4 +86,11 @@ describe('step model', () => {
     expect(r.state.running).toBe(false)
     expect(r.state.elapsed).toBe(1200)
   })
+
+  it('preview session keeps running past 20 min', () => {
+    const r = simulate(byId('coherence'), 20 * 60 + 1, 0.1)
+    expect(r.state.complete).toBe(false)
+    expect(r.state.running).toBe(true)
+    expect(r.state.elapsed).toBeGreaterThan(1200)
+  })
 })

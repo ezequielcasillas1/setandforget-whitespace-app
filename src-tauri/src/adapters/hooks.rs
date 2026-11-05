@@ -22,8 +22,8 @@ pub fn table(tool: &str, event: &str) -> Option<Ev> {
         ("copilot", "userPromptSubmitted") => Working,
         ("copilot", "notification" | "errorOccurred") => NeedsYou,
         ("copilot", "agentStop" | "sessionEnd") => Done,
-        ("cursor", "beforeSubmitPrompt") => Working,
-        ("cursor", "stop:error") => NeedsYou,
+        ("cursor", "beforeSubmitPrompt" | "afterShellExecution" | "afterMCPExecution" | "preToolUse" | "postToolUse" | "afterFileEdit" | "subagentStop") => Working,
+        ("cursor", "stop:error" | "beforeShellExecution" | "beforeMCPExecution" | "subagentStart" | "preToolUse:run" | "preToolUse:accept" | "preToolUse:start" | "preToolUse:allow") => NeedsYou,
         ("cursor", "stop" | "sessionEnd") => Done,
         ("windsurf", "pre_user_prompt") => Working,
         ("windsurf", "post_cascade_response") => Done,
@@ -47,9 +47,23 @@ impl HookTracker {
             let (Some(ev), session) = (v["event"].as_str(), v["session"].as_str().unwrap_or("").to_string()) else { continue };
             self.seen_any = true;
             match table(tool, ev) {
-                Some(Ev::Working) => { self.working.insert(session, ()); }
+                Some(Ev::Working) => {
+                    // A later line in this batch (the accept) wins over the approval prompt.
+                    self.needs = false;
+                    // A follow-up line that finally has an id replaces the blank one from a fast hook exit.
+                    if !session.is_empty() { self.working.remove(""); }
+                    if !(session.is_empty() && !self.working.is_empty()) { self.working.insert(session, ()); }
+                }
                 Some(Ev::NeedsYou) => { self.working.remove(&session); self.needs = true; }
-                Some(Ev::Done) => { self.working.remove(&session); }
+                // Stop often arrives with no id (stdin still open) or a different id than the prompt.
+                // An empty id, or an id we never saw while only one run is open, ends that run.
+                Some(Ev::Done) => {
+                    if session.is_empty() || (!self.working.contains_key(&session) && self.working.len() <= 1) {
+                        self.working.clear();
+                    } else {
+                        self.working.remove(&session);
+                    }
+                }
                 None => {}
             }
         }
@@ -137,6 +151,48 @@ mod tests {
         assert_eq!(step(&mut t, "copilot", &[]), None);
         assert_eq!(step(&mut t, "copilot", &[l("userPromptSubmitted", "a")]), Some(Working));
     }
+    #[test] fn cursor_stop_without_matching_session_still_finishes() {
+        let mut t = HookTracker::default();
+        assert_eq!(step(&mut t, "cursor", &[l("beforeSubmitPrompt", "conv")]), Some(Working));
+        assert_eq!(step(&mut t, "cursor", &[l("stop", "")]), Some(Done), "stop with no id still ends the run");
+        let mut t = HookTracker::default();
+        step(&mut t, "cursor", &[l("beforeSubmitPrompt", "conv")]);
+        assert_eq!(step(&mut t, "cursor", &[l("stop", "other")]), Some(Done));
+    }
+    #[test] fn cursor_approval_hands_control_back_then_resumes() {
+        let mut t = HookTracker::default();
+        step(&mut t, "cursor", &[l("beforeSubmitPrompt", "conv")]);
+        assert_eq!(step(&mut t, "cursor", &[l("beforeShellExecution", "")]), Some(NeedsYou));
+        assert_eq!(step(&mut t, "cursor", &[]), None);
+        assert_eq!(step(&mut t, "cursor", &[l("afterShellExecution", "conv")]), Some(Working));
+    }
+    #[test] fn pre_command_does_not_start_the_whiteout() {
+        assert_eq!(table("cursor", "beforeShellExecution"), Some(Ev::NeedsYou));
+        assert_eq!(table("cursor", "beforeMCPExecution"), Some(Ev::NeedsYou));
+        assert_eq!(table("claude", "PermissionRequest"), Some(Ev::NeedsYou));
+        assert_eq!(table("codex", "PermissionRequest"), Some(Ev::NeedsYou));
+        assert_eq!(table("cursor", "preToolUse:run"), Some(Ev::NeedsYou));
+        assert_eq!(table("cursor", "preToolUse:accept"), Some(Ev::NeedsYou));
+        assert_eq!(table("cursor", "preToolUse:start"), Some(Ev::NeedsYou));
+        assert_eq!(table("cursor", "preToolUse"), Some(Ev::Working));
+    }
+    #[test] fn run_button_backs_out_unless_the_tool_already_finished() {
+        let mut t = HookTracker::default();
+        step(&mut t, "cursor", &[l("beforeSubmitPrompt", "conv")]);
+        assert_eq!(step(&mut t, "cursor", &[l("preToolUse:run", "conv")]), Some(NeedsYou));
+        let mut t = HookTracker::default();
+        step(&mut t, "cursor", &[l("beforeSubmitPrompt", "conv")]);
+        assert_eq!(step(&mut t, "cursor", &[l("preToolUse:run", "conv"), l("postToolUse", "conv")]), Some(Working));
+        assert_eq!(step(&mut t, "cursor", &[l("preToolUse:accept", "")]), Some(NeedsYou));
+        let mut t = HookTracker::default();
+        step(&mut t, "cursor", &[l("beforeSubmitPrompt", "conv")]);
+        assert_eq!(step(&mut t, "cursor", &[l("subagentStart", "conv")]), Some(NeedsYou));
+    }
+    #[test] fn accept_in_the_same_read_returns_to_work() {
+        let mut t = HookTracker::default();
+        step(&mut t, "cursor", &[l("beforeSubmitPrompt", "conv")]);
+        assert_eq!(step(&mut t, "cursor", &[l("beforeShellExecution", "conv"), l("afterShellExecution", "conv")]), Some(Working));
+    }
     #[test] fn cursor_error_is_needs_you_and_windsurf_has_none() {
         let mut t = HookTracker::default();
         step(&mut t, "cursor", &[l("beforeSubmitPrompt", "a")]);
@@ -177,6 +233,14 @@ mod tests {
         assert_eq!(v, serde_json::json!({"t":5,"tool":"claude","event":"Stop","session":"s1"}));
         let c: serde_json::Value = serde_json::from_str(&crate::signal::line("cursor", "stop", r#"{"conversation_id":"c","status":"error"}"#, 1)).unwrap();
         assert_eq!(c["event"], "stop:error");
+        let run = crate::signal::line("cursor", "preToolUse", r#"{"tool_name":"Shell","tool_input":{"command":"secret-cmd"}}"#, 2);
+        let run: serde_json::Value = serde_json::from_str(&run).unwrap();
+        assert_eq!(run["event"], "preToolUse:run");
+        assert!(!run.to_string().contains("secret"));
+        assert_eq!(crate::signal::cursor_tool_gate("Task"), "preToolUse:start");
+        assert_eq!(crate::signal::cursor_tool_gate("Write"), "preToolUse:accept");
+        assert_eq!(crate::signal::cursor_tool_gate("MCP:linear"), "preToolUse:allow");
+        assert_eq!(crate::signal::cursor_tool_gate("Read"), "preToolUse");
         let e: serde_json::Value = serde_json::from_str(&crate::signal::line("codex", "Stop", "", 1)).unwrap();
         assert_eq!(e["session"], "");
     }

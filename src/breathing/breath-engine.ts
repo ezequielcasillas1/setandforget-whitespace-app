@@ -76,7 +76,7 @@ export function step(
     if (current.phaseIndex === 0) current.cycle += 1
     events.push({ kind: phases[current.phaseIndex].kind, phaseIndex: current.phaseIndex, cycle: current.cycle })
   }
-  if (current.elapsed >= durationSec) {
+  if (Number.isFinite(durationSec) && current.elapsed >= durationSec) {
     current.elapsed = durationSec
     current.running = false
     current.complete = true

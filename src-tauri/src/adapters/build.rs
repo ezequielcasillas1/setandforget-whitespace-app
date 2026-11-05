@@ -58,7 +58,7 @@ pub fn is_excluded(name: &str, cmdline: &str) -> bool {
 /// Card §15.3 default list (rev with Sol's edits): `.exe` entries are `process` (`msbuild.exe`, `tsc.exe`),
 /// everything else is a whole-word `command`.
 pub fn default_watch() -> Vec<WatchEntry> {
-    ["cargo build", "cargo run", "npm run build", "pnpm build", "yarn build", "gradle", "dotnet build"]
+    ["cargo build", "cargo run", "npm run build", "pnpm build", "yarn build", "gradle", "gradlew", "dotnet build"]
         .iter().map(|p| WatchEntry::new(p, Kind::Command))
         .chain(["msbuild.exe", "tsc.exe"].iter().map(|p| WatchEntry::new(p, Kind::Process)))
         .chain(std::iter::once(WatchEntry::new("vite build", Kind::Command)))
@@ -324,7 +324,7 @@ mod tests {
         assert_eq!(watch_from_settings(&serde_json::json!({})), default_watch());
         assert_eq!(watch_from_settings(&serde_json::json!({ "watch": [] })), vec![]);
     }
-    #[test] fn defaults_are_valid_and_unique() { assert_eq!(normalize_watch(default_watch()), default_watch()); assert_eq!(default_watch().len(), 10); }
+    #[test] fn defaults_are_valid_and_unique() { assert_eq!(normalize_watch(default_watch()), default_watch()); assert_eq!(default_watch().len(), 11); }
     #[test] fn exit_code_mapping() {
         assert_eq!(exit_to_state(0), ToolState::Done);
         assert_eq!(exit_to_state(1), ToolState::NeedsYou);

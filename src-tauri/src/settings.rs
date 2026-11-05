@@ -55,7 +55,7 @@ mod tests {
         assert_eq!(v["adapters"]["claude"], json!(true));
         assert_eq!(v["adapters"]["grokbot"], json!(false));
         assert_eq!(v["watch"], json!([{ "match": "make", "kind": "command" }]));
-        assert_eq!(defaults()["watch"].as_array().unwrap().len(), 10);
+        assert_eq!(defaults()["watch"].as_array().unwrap().len(), 11);
     }
     #[test] fn load_keeps_display_off_and_fills_missing() {
         let p = std::env::temp_dir().join(format!("ws-display-{}.json", std::process::id()));
